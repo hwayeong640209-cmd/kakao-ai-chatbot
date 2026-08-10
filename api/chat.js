@@ -107,7 +107,7 @@ function normalize(text) {
 // ==========================================
 // 질문에서 특정 항목명 찾기
 // ==========================================
-function findSection(sections, question) {
+function findSections(sections, question) {
 
   const q = normalize(question);
 
