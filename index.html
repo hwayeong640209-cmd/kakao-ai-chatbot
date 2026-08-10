@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>AI 챗봇 테스트</title>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f5f5f5;
+    }
+
+    .container {
+      max-width: 700px;
+      margin: 40px auto;
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+
+    h1 {
+      margin-top: 0;
+    }
+
+    #chat {
+      min-height: 400px;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      overflow-y: auto;
+    }
+
+    .message {
+      margin: 12px 0;
+      padding: 10px 14px;
+      border-radius: 12px;
+      line-height: 1.5;
+    }
+
+    .user {
+      background: #e8f0fe;
+      text-align: right;
+    }
+
+    .bot {
+      background: #f1f1f1;
+    }
+
+    .input-area {
+      display: flex;
+      gap: 8px;
+    }
+
+    input {
+      flex: 1;
+      padding: 14px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      font-size: 16px;
+    }
+
+    button {
+      padding: 14px 20px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      background: #111;
+      color: white;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <h1>🤖 AI 챗봇</h1>
+
+  <div id="chat"></div>
+
+  <div class="input-area">
+    <input
+      id="message"
+      type="text"
+      placeholder="질문을 입력하세요."
+    />
+
+    <button id="send">
+      보내기
+    </button>
+  </div>
+
+</div>
+
+<script>
+
+const chat = document.getElementById("chat");
+const input = document.getElementById("message");
+const sendButton = document.getElementById("send");
+
+function addMessage(text, type) {
+
+  const div = document.createElement("div");
+
+  div.className = `message ${type}`;
+
+  div.textContent = text;
+
+  chat.appendChild(div);
+
+  chat.scrollTop = chat.scrollHeight;
+}
+
+
+async function sendMessage() {
+
+  const message = input.value.trim();
+
+  if (!message) {
+    return;
+  }
+
+  addMessage(message, "user");
+
+  input.value = "";
+
+  sendButton.disabled = true;
+
+  addMessage("생각 중...", "bot");
+
+  try {
+
+    const response = await fetch("/api/chat", {
+
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json"
+      },
+
+      body: JSON.stringify({
+        message: message
+      })
+
+    });
+
+    const data = await response.json();
+
+    // "생각 중..." 제거
+    chat.lastChild.remove();
+
+    if (!response.ok) {
+      throw new Error(data.error || "오류가 발생했습니다.");
+    }
+
+    addMessage(data.answer, "bot");
+
+  } catch (error) {
+
+    chat.lastChild.remove();
+
+    addMessage(
+      "오류가 발생했습니다: " + error.message,
+      "bot"
+    );
+
+  } finally {
+
+    sendButton.disabled = false;
+
+    input.focus();
+
+  }
+}
+
+
+sendButton.addEventListener("click", sendMessage);
+
+
+input.addEventListener("keydown", function(event) {
+
+  if (event.key === "Enter") {
+    sendMessage();
+  }
+
+});
+
+</script>
+
+</body>
+</html>
