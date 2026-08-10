@@ -111,6 +111,14 @@ function normalize(text) {
 }
 
 
+// 띄어쓰기를 제거한 비교용 문자열
+function compact(text) {
+
+  return normalize(text)
+    .replace(/\s/g, "");
+}
+
+
 // ==========================================
 // 여러 항목 검색
 // ==========================================
@@ -118,6 +126,7 @@ function normalize(text) {
 function findSections(sections, question) {
 
   const q = normalize(question);
+  const compactQuestion = compact(question);
 
   console.log("사용자 질문:", question);
 
@@ -130,18 +139,18 @@ function findSections(sections, question) {
 
 
   // ========================================
-  // 질문에 항목명이 직접 들어있는 경우
+  // 1. 제목을 띄어쓰기 무시하고 정확하게 검색
   // ========================================
 
   const directMatches = [];
 
   for (const section of sections) {
 
-    const title = normalize(section.title);
+    const title = compact(section.title);
 
     if (
       title.length >= 4 &&
-      q.includes(title)
+      compactQuestion.includes(title)
     ) {
 
       directMatches.push(section);
@@ -152,7 +161,7 @@ function findSections(sections, question) {
   if (directMatches.length > 0) {
 
     console.log(
-      "직접 검색된 항목:",
+      "제목으로 직접 검색된 항목:",
       directMatches.map(
         s => `${s.number} ${s.title}`
       )
@@ -163,25 +172,137 @@ function findSections(sections, question) {
 
 
   // ========================================
-  // 제목의 핵심 단어로 검색
+  // 2. 자연어 표현을 업무자료 표현으로 변환
+  // ========================================
+
+  const synonyms = {
+
+    "술": [
+      "음주운전",
+      "음주",
+    ],
+
+    "술먹고": [
+      "음주운전",
+      "음주",
+    ],
+
+    "술때문에": [
+      "음주운전",
+      "음주",
+    ],
+
+    "면허정지": [
+      "면허 정지",
+      "정지 처분",
+    ],
+
+    "면허취소": [
+      "면허 취소",
+      "취소 처분",
+    ],
+
+    "예약": [
+      "접수방법",
+      "온라인사전예약",
+      "인터넷 접수",
+    ],
+
+  };
+
+
+  // ========================================
+  // 3. 질문의 핵심 단어 추출
+  // ========================================
+
+  let keywords = q
+    .split(" ")
+    .filter(word => word.length >= 2);
+
+
+  // ========================================
+  // 4. 동의어 / 자연어 표현 추가
+  // ========================================
+
+  const additionalKeywords = [];
+
+
+  for (const keyword of keywords) {
+
+    if (synonyms[keyword]) {
+
+      additionalKeywords.push(
+        ...synonyms[keyword]
+      );
+    }
+  }
+
+
+  keywords = [
+    ...keywords,
+    ...additionalKeywords,
+  ];
+
+
+  // 중복 제거
+  keywords = [
+    ...new Set(
+      keywords
+    )
+  ];
+
+
+  console.log(
+    "검색 키워드:",
+    keywords
+  );
+
+
+  // ========================================
+  // 5. 제목 + 내용 전체를 검색
   // ========================================
 
   const scored = [];
 
+
   for (const section of sections) {
 
-    const titleWords = normalize(section.title)
-      .split(" ")
-      .filter(word => word.length >= 2);
+    const titleText =
+      normalize(section.title);
+
+    const contentText =
+      normalize(section.content);
+
 
     let score = 0;
 
-    for (const word of titleWords) {
 
-      if (q.includes(word)) {
-        score++;
+    for (const keyword of keywords) {
+
+      const normalizedKeyword =
+        normalize(keyword);
+
+
+      if (
+        titleText.includes(
+          normalizedKeyword
+        )
+      ) {
+
+        // 제목에서 발견되면 높은 점수
+        score += 5;
+
+      } else if (
+        contentText.includes(
+          normalizedKeyword
+        )
+      ) {
+
+        // 본문에서 발견되면 점수
+        score += 2;
       }
     }
+
 
     if (score > 0) {
 
@@ -193,21 +314,33 @@ function findSections(sections, question) {
   }
 
 
+  // ========================================
+  // 6. 점수 높은 순서대로 정렬
+  // ========================================
+
   scored.sort(
-    (a, b) => b.score - a.score
+    (a, b) =>
+      b.score - a.score
   );
 
 
-  // 점수가 높은 항목 최대 3개
-  const results = scored
-    .slice(0, 3)
-    .map(item => item.section);
+  // ========================================
+  // 7. 관련 항목 최대 3개
+  // ========================================
+
+  const results =
+    scored
+      .slice(0, 3)
+      .map(
+        item => item.section
+      );
 
 
   console.log(
-    "키워드 검색 결과:",
+    "최종 검색 결과:",
     results.map(
-      s => `${s.number} ${s.title}`
+      s =>
+        `${s.number} ${s.title}`
     )
   );
 
