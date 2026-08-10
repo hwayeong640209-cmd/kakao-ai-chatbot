@@ -281,57 +281,252 @@ const synonyms = {
 // 관련 Section 검색
 // ============================================================
 
-function findSections(
-  sections,
-  question
-) {
+function findSections(sections, question) {
 
-  const normalizedQuestion =
-    normalize(question);
+  // ==========================================================
+  // 질문 정리
+  // ==========================================================
 
-  const compactQuestion =
-    compact(question);
+  const q = compact(question);
 
 
   // ==========================================================
-  // ⭐ 가장 중요한 특별 규칙
+  // 한국어 조사 제거용
   //
-  // 술/음주 + 면허 정지/취소
-  // → 특별교통안전교육 우선
+  // 특별교통안전교육은
+  // → 특별교통안전교육
+  //
+  // 응시전교통안전교육이랑
+  // → 응시전교통안전교육
   // ==========================================================
 
-  const alcoholPattern =
-    /술|음주|음주운전|술먹고|술먹은|술때문에/;
+  function removeParticles(text) {
 
-  const licensePattern =
-    /면허정지|면허취소|정지됐|정지되|취소됐|취소되|정지처분|취소처분/;
-
-
-  if (
-    alcoholPattern.test(compactQuestion) &&
-    licensePattern.test(compactQuestion)
-  ) {
-
-    const special =
-      sections.find(
-        section =>
-          compact(section.title)
-            .includes(
-              compact("특별교통안전교육")
-            )
+    return text
+      .replace(
+        /(으로|로|에서|에게|한테|까지|부터|처럼|보다|마다|밖에|조차|마저|만|도|은|는|이|가|을|를|와|과|랑|이랑|에|의|요|해|해야|할|하면|했는데|됐는데|때문에)$/g,
+        ""
       );
 
-
-    if (special) {
-
-      return [special];
-
-    }
   }
 
 
   // ==========================================================
-  // 질문에 Section 제목이 직접 들어있는 경우
+  // 질문에서 핵심 단어 추출
+  // ==========================================================
+
+  const questionWords =
+    normalize(question)
+      .split(/\s+/)
+      .map(word =>
+        removeParticles(
+          compact(word)
+        )
+      )
+      .filter(
+        word =>
+          word.length >= 2
+      );
+
+
+  // ==========================================================
+  // 질문 전체에서도 조사 제거 버전 생성
+  // ==========================================================
+
+  const normalizedQuestion =
+    removeParticles(
+      compact(question)
+    );
+
+
+  // ==========================================================
+  // ⭐ 특별교통안전교육
+  //
+  // 사용자가 어떻게 물어도 특별교육 자료를 찾도록 한다.
+  // ==========================================================
+
+  const isSpecialEducation =
+    q.includes("특별교통안전교육") ||
+    q.includes("특별교통교육") ||
+    q.includes("특별교육") ||
+    (
+      (
+        q.includes("음주") ||
+        q.includes("술") ||
+        q.includes("음주운전")
+      ) &&
+      (
+        q.includes("면허정지") ||
+        q.includes("면허취소") ||
+        q.includes("정지") ||
+        q.includes("취소")
+      )
+    );
+
+
+  if (isSpecialEducation) {
+
+    const specialSection =
+      sections.find(section => {
+
+        const title =
+          compact(section.title);
+
+        const content =
+          compact(section.content);
+
+        return (
+          title.includes(
+            "특별교통안전교육"
+          ) ||
+          (
+            content.includes(
+              "특별교통안전교육"
+            ) &&
+            (
+              content.includes("음주") ||
+              content.includes("면허정지") ||
+              content.includes("면허취소")
+            )
+          )
+        );
+
+      });
+
+
+    if (specialSection) {
+
+      return [specialSection];
+
+    }
+
+  }
+
+
+  // ==========================================================
+  // ⭐ 응시 전 교통안전교육
+  // ==========================================================
+
+  const isBeforeTestEducation =
+    q.includes("응시전교통안전교육") ||
+    q.includes("응시전교통교육") ||
+    q.includes("응시전교육") ||
+    q.includes("처음면허") ||
+    q.includes("첫면허") ||
+    q.includes("면허처음");
+
+
+  if (isBeforeTestEducation) {
+
+    const beforeSection =
+      sections.find(section => {
+
+        const title =
+          compact(section.title);
+
+        const content =
+          compact(section.content);
+
+
+        return (
+          title.includes(
+            "응시전교통안전교육"
+          ) ||
+          content.includes(
+            "응시전교통안전교육"
+          )
+        );
+
+      });
+
+
+    if (beforeSection) {
+
+      return [beforeSection];
+
+    }
+
+  }
+
+
+  // ==========================================================
+  // ⭐ 두 교육을 비교하는 질문
+  //
+  // "응시전교통안전교육이랑 특별교통안전교육"
+  // ==========================================================
+
+  const wantsBoth =
+    (
+      q.includes("응시전") &&
+      q.includes("특별교통")
+    ) ||
+    (
+      q.includes("두교육") ||
+      q.includes("둘다") ||
+      q.includes("둘 다")
+    );
+
+
+  if (wantsBoth) {
+
+    const result = [];
+
+
+    const beforeSection =
+      sections.find(section =>
+        compact(section.title)
+          .includes(
+            "응시전교통안전교육"
+          ) ||
+        compact(section.content)
+          .includes(
+            "응시전교통안전교육"
+          )
+      );
+
+
+    const specialSection =
+      sections.find(section =>
+        compact(section.title)
+          .includes(
+            "특별교통안전교육"
+          ) ||
+        compact(section.content)
+          .includes(
+            "특별교통안전교육"
+          )
+      );
+
+
+    if (beforeSection) {
+
+      result.push(
+        beforeSection
+      );
+
+    }
+
+
+    if (specialSection) {
+
+      result.push(
+        specialSection
+      );
+
+    }
+
+
+    if (result.length > 0) {
+
+      return result;
+
+    }
+
+  }
+
+
+  // ==========================================================
+  // 일반적인 제목 검색
   // ==========================================================
 
   const directMatches = [];
@@ -342,14 +537,20 @@ function findSections(
     const title =
       compact(section.title);
 
+
+    // 제목 자체가 질문에 포함되어 있는지 확인
     if (
-      title.length >= 4 &&
-      compactQuestion.includes(title)
+      normalizedQuestion.includes(
+        title
+      )
     ) {
 
-      directMatches.push(section);
+      directMatches.push(
+        section
+      );
 
     }
+
   }
 
 
@@ -363,53 +564,7 @@ function findSections(
 
 
   // ==========================================================
-  // 키워드
-  // ==========================================================
-
-  let keywords =
-    normalizedQuestion
-      .split(/\s+/)
-      .filter(
-        word =>
-          word.length >= 2
-      );
-
-
-  // ==========================================================
-  // 동의어 추가
-  // ==========================================================
-
-  const additionalKeywords = [];
-
-
-  for (const keyword of keywords) {
-
-    const key =
-      compact(keyword);
-
-    if (synonyms[key]) {
-
-      additionalKeywords.push(
-        ...synonyms[key]
-      );
-
-    }
-  }
-
-
-  keywords = [
-    ...keywords,
-    ...additionalKeywords
-  ];
-
-
-  keywords = [
-    ...new Set(keywords)
-  ];
-
-
-  // ==========================================================
-  // 점수 계산
+  // 일반 키워드 검색
   // ==========================================================
 
   const scored = [];
@@ -418,44 +573,27 @@ function findSections(
   for (const section of sections) {
 
     const title =
-      normalize(section.title);
-
-    const content =
-      normalize(section.content);
-
-    const compactTitle =
       compact(section.title);
 
-    const compactContent =
+    const content =
       compact(section.content);
 
 
     let score = 0;
 
 
-    for (const keyword of keywords) {
+    for (
+      const keyword of questionWords
+    ) {
 
-      const word =
-        normalize(keyword);
-
-      const compactWord =
-        compact(keyword);
-
-
-      if (!word) {
+      if (!keyword) {
         continue;
       }
 
 
+      // 제목에 있으면 강하게 가산
       if (
-        title.includes(word)
-      ) {
-
-        score += 10;
-
-      }
-      else if (
-        compactTitle.includes(compactWord)
+        title.includes(keyword)
       ) {
 
         score += 10;
@@ -463,20 +601,15 @@ function findSections(
       }
 
 
+      // 내용에 있으면 가산
       if (
-        content.includes(word)
+        content.includes(keyword)
       ) {
 
         score += 3;
 
       }
-      else if (
-        compactContent.includes(compactWord)
-      ) {
 
-        score += 3;
-
-      }
     }
 
 
@@ -488,8 +621,13 @@ function findSections(
       });
 
     }
+
   }
 
+
+  // ==========================================================
+  // 높은 점수 순서
+  // ==========================================================
 
   scored.sort(
     (a, b) =>
@@ -503,6 +641,7 @@ function findSections(
       item =>
         item.section
     );
+
 }
 
 
