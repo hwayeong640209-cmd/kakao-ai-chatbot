@@ -1,109 +1,24 @@
-import { GoogleGenAI } from "@google/genai";
-import fs from "fs/promises";
+import fs from "fs";
 import path from "path";
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-});
 
-const SYSTEM_INSTRUCTION = `
-너는 제공된 업무자료를 기반으로 답변하는 한국어 AI 챗봇이다.
+// ============================================================
+// 기본 설정
+// ============================================================
 
-반드시 지켜야 할 규칙:
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-1. 제공된 업무자료를 최우선으로 사용한다.
-2. 서로 다른 업무 항목의 내용을 임의로 섞지 않는다.
-3. 사용자가 여러 항목을 질문하면 각 항목을 명확하게 구분해서 답변한다.
-4. 자료에 없는 내용을 추측하지 않는다.
-5. 현장접수와 현장결제를 절대로 같은 의미로 취급하지 않는다.
-6. 온라인접수와 온라인사전예약을 구분한다.
-7. 자료에 명시되지 않은 사항은 가능하다고 단정하지 않는다.
-8. 자료에 없는 내용은 "제공된 자료에서는 확인되지 않습니다."라고 안내한다.
-9. 자연스럽고 이해하기 쉬운 한국어로 답변한다.
-`;
+// 현재 Google AI Studio에서 사용할 모델
+const GEMINI_MODEL = "gemini-3.5-flash";
 
 
-// ==========================================
-// 지식자료 읽기
-// ==========================================
+// ============================================================
+// 텍스트 정리 함수
+// ============================================================
 
-async function loadKnowledge() {
+function normalize(text = "") {
 
-  const filePath = path.join(
-    process.cwd(),
-    "knowledge",
-    "챗봇22.txt"
-  );
-
-  return await fs.readFile(
-    filePath,
-    "utf8"
-  );
-}
-
-
-// ==========================================
-// TXT를 항목별로 분리
-// ==========================================
-
-function extractSections(text) {
-
-  const lines = text.split(/\r?\n/);
-
-  const sections = [];
-
-  let currentSection = null;
-
-  for (const line of lines) {
-
-    const match = line.match(
-      /^\s*([①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳])\s*(.*)/
-    );
-
-    if (match) {
-
-      if (currentSection) {
-        sections.push(currentSection);
-      }
-
-      const number = match[1];
-
-      let title = match[2].trim();
-
-      // 제목에 ":"가 있으면 앞부분만 제목으로 사용
-      if (title.includes(":")) {
-        title = title.split(":")[0].trim();
-      }
-
-      currentSection = {
-        number,
-        title,
-        content: line.trim(),
-      };
-
-    } else {
-
-      if (currentSection) {
-        currentSection.content += "\n" + line;
-      }
-    }
-  }
-
-  if (currentSection) {
-    sections.push(currentSection);
-  }
-
-  return sections;
-}
-
-
-// ==========================================
-// 문자열 정리
-// ==========================================
-
-function normalize(text) {
-
-  return text
+  return String(text)
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .replace(/\s+/g, " ")
@@ -112,124 +27,466 @@ function normalize(text) {
 
 
 // 띄어쓰기를 제거한 비교용 문자열
-function compact(text) {
+//
+// 예:
+// 응시전교통안전교육
+// 응시 전 교통안전교육
+//
+// → 둘 다 동일하게 비교 가능
+//
+function compact(text = "") {
 
   return normalize(text)
     .replace(/\s/g, "");
 }
 
 
-// ==========================================
-// 여러 항목 검색
-// ==========================================
+// ============================================================
+// 지식자료 읽기
+// ============================================================
+
+function loadKnowledge() {
+
+  const filePath = path.join(
+    process.cwd(),
+    "knowledge",
+    "챗봇22.txt"
+  );
+
+  if (!fs.existsSync(filePath)) {
+
+    throw new Error(
+      "knowledge/챗봇22.txt 파일을 찾을 수 없습니다."
+    );
+  }
+
+  return fs.readFileSync(
+    filePath,
+    "utf8"
+  );
+}
+
+
+// ============================================================
+// TXT 자료를 Section으로 분리
+// ============================================================
+//
+// 자료가
+//
+// 1. ...
+// 2. ...
+// 3. ...
+//
+// ① ...
+// ② ...
+//
+// 등의 형태로 되어 있어도 최대한 항목 단위로 나눔
+//
+// ============================================================
+
+function parseSections(text) {
+
+  const lines = text.split(/\r?\n/);
+
+  const sections = [];
+
+  let current = null;
+
+
+  for (const line of lines) {
+
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      continue;
+    }
+
+
+    // --------------------------------------------------------
+    // 숫자 항목
+    //
+    // 1.
+    // 2.
+    // 25.
+    //
+    // --------------------------------------------------------
+
+    const numberMatch =
+      trimmed.match(/^(\d+)\.\s*(.*)$/);
+
+
+    // --------------------------------------------------------
+    // 동그라미 항목
+    //
+    // ①
+    // ②
+    // ③
+    //
+    // --------------------------------------------------------
+
+    const circleMatch =
+      trimmed.match(/^([①②③④⑤⑥⑦⑧⑨⑩])\s*(.*)$/);
+
+
+    // --------------------------------------------------------
+    // 새로운 Section 시작
+    // --------------------------------------------------------
+
+    if (numberMatch || circleMatch) {
+
+      if (current) {
+
+        current.content =
+          current.content.trim();
+
+        sections.push(current);
+      }
+
+
+      const marker =
+        numberMatch
+          ? numberMatch[1]
+          : circleMatch[1];
+
+      const title =
+        numberMatch
+          ? numberMatch[2]
+          : circleMatch[2];
+
+
+      current = {
+
+        number: marker,
+
+        title: title,
+
+        content: title
+      };
+
+
+      continue;
+    }
+
+
+    // --------------------------------------------------------
+    // 현재 Section의 내용
+    // --------------------------------------------------------
+
+    if (current) {
+
+      current.content +=
+        "\n" + trimmed;
+    }
+
+  }
+
+
+  // 마지막 Section 저장
+  if (current) {
+
+    current.content =
+      current.content.trim();
+
+    sections.push(current);
+  }
+
+
+  return sections;
+}
+
+
+// ============================================================
+// 자연어 → 자료 표현 변환
+// ============================================================
+
+const synonyms = {
+
+  // 음주 관련
+  "술": [
+    "음주",
+    "음주운전"
+  ],
+
+  "술먹고": [
+    "음주",
+    "음주운전"
+  ],
+
+  "술먹은": [
+    "음주",
+    "음주운전"
+  ],
+
+  "술때문에": [
+    "음주",
+    "음주운전"
+  ],
+
+  "술 때문에": [
+    "음주",
+    "음주운전"
+  ],
+
+  // 면허 정지
+  "면허정지": [
+    "면허 정지",
+    "정지 처분"
+  ],
+
+  "면허가정지": [
+    "면허 정지",
+    "정지 처분"
+  ],
+
+  "정지됐": [
+    "면허 정지",
+    "정지 처분"
+  ],
+
+  "정지되": [
+    "면허 정지",
+    "정지 처분"
+  ],
+
+  // 면허 취소
+  "면허취소": [
+    "면허 취소",
+    "취소 처분"
+  ],
+
+  "면허가취소": [
+    "면허 취소",
+    "취소 처분"
+  ],
+
+  "취소됐": [
+    "면허 취소",
+    "취소 처분"
+  ],
+
+  // 예약
+  "예약": [
+    "예약",
+    "접수방법",
+    "온라인",
+    "인터넷"
+  ],
+
+  "접수": [
+    "접수방법",
+    "예약"
+  ],
+
+  // 준비물
+  "준비물": [
+    "준비물"
+  ],
+
+  "뭐가필요": [
+    "준비물"
+  ],
+
+  "뭐필요": [
+    "준비물"
+  ],
+
+  // 갱신
+  "갱신": [
+    "갱신",
+    "적성검사"
+  ],
+
+  // 재발급
+  "재발급": [
+    "재발급"
+  ],
+
+  // 고령자
+  "75살": [
+    "75세",
+    "고령운전자"
+  ],
+
+  "75세": [
+    "75세",
+    "고령운전자"
+  ],
+
+  "어르신": [
+    "고령운전자"
+  ]
+
+};
+
+
+// ============================================================
+// Section 검색
+// ============================================================
 
 function findSections(sections, question) {
 
-  const q = normalize(question);
-  const compactQuestion = compact(question);
+  const q =
+    normalize(question);
 
-  console.log("사용자 질문:", question);
+  const compactQuestion =
+    compact(question);
+
 
   console.log(
-    "전체 항목:",
-    sections.map(
-      s => `${s.number} ${s.title}`
-    )
+    "사용자 질문:",
+    question
   );
 
 
-  // ========================================
-  // 1. 제목을 띄어쓰기 무시하고 정확하게 검색
-  // ========================================
+  // ==========================================================
+  // ⭐ 핵심 규칙 1
+  //
+  // 음주/술 + 면허 정지/취소
+  //
+  // → 특별교통안전교육을 최우선으로 선택
+  //
+  // ==========================================================
+
+  const hasAlcoholKeyword =
+    /술|음주|음주운전|술먹고|술을마시고/.test(
+      compactQuestion
+    );
+
+
+  const hasLicensePenaltyKeyword =
+    /면허정지|면허취소|정지처분|취소처분|정지됐|정지되|취소됐|취소되/.test(
+      compactQuestion
+    );
+
+
+  if (
+    hasAlcoholKeyword &&
+    hasLicensePenaltyKeyword
+  ) {
+
+    const specialEducation =
+      sections.find(section => {
+
+        return compact(
+          section.title
+        ).includes(
+          "특별교통안전교육"
+        );
+
+      });
+
+
+    if (specialEducation) {
+
+      console.log(
+        "음주 + 면허 정지/취소 감지"
+      );
+
+      console.log(
+        "→ 특별교통안전교육 우선 선택"
+      );
+
+
+      return [
+        specialEducation
+      ];
+    }
+  }
+
+
+  // ==========================================================
+  // 2. 제목 직접 검색
+  //
+  // 띄어쓰기를 무시함
+  //
+  // 응시전교통안전교육
+  // 응시 전 교통안전교육
+  //
+  // 둘을 같은 것으로 처리
+  //
+  // ==========================================================
 
   const directMatches = [];
 
+
   for (const section of sections) {
 
-    const title = compact(section.title);
+    const title =
+      compact(section.title);
+
 
     if (
       title.length >= 4 &&
       compactQuestion.includes(title)
     ) {
 
-      directMatches.push(section);
+      directMatches.push(
+        section
+      );
     }
   }
 
 
-  if (directMatches.length > 0) {
+  if (
+    directMatches.length > 0
+  ) {
 
     console.log(
-      "제목으로 직접 검색된 항목:",
+      "제목 직접 검색 결과:",
       directMatches.map(
-        s => `${s.number} ${s.title}`
+        s =>
+          `${s.number} ${s.title}`
       )
     );
+
 
     return directMatches;
   }
 
 
-  // ========================================
-  // 2. 자연어 표현을 업무자료 표현으로 변환
-  // ========================================
+  // ==========================================================
+  // 3. 질문 핵심 단어 추출
+  // ==========================================================
 
-  const synonyms = {
-
-    "술": [
-      "음주운전",
-      "음주",
-    ],
-
-    "술먹고": [
-      "음주운전",
-      "음주",
-    ],
-
-    "술때문에": [
-      "음주운전",
-      "음주",
-    ],
-
-    "면허정지": [
-      "면허 정지",
-      "정지 처분",
-    ],
-
-    "면허취소": [
-      "면허 취소",
-      "취소 처분",
-    ],
-
-    "예약": [
-      "접수방법",
-      "온라인사전예약",
-      "인터넷 접수",
-    ],
-
-  };
+  let keywords =
+    q
+      .split(/\s+/)
+      .filter(
+        word =>
+          word.length >= 2
+      );
 
 
-  // ========================================
-  // 3. 질문의 핵심 단어 추출
-  // ========================================
-
-  let keywords = q
-    .split(" ")
-    .filter(word => word.length >= 2);
-
-
-  // ========================================
-  // 4. 동의어 / 자연어 표현 추가
-  // ========================================
+  // ==========================================================
+  // 4. 동의어 추가
+  // ==========================================================
 
   const additionalKeywords = [];
 
 
-  for (const keyword of keywords) {
+  for (
+    const keyword of keywords
+  ) {
 
-    if (synonyms[keyword]) {
+    const compactKeyword =
+      compact(keyword);
+
+
+    if (
+      synonyms[compactKeyword]
+    ) {
+
+      additionalKeywords.push(
+        ...synonyms[
+          compactKeyword
+        ]
+      );
+    }
+
+
+    if (
+      synonyms[keyword]
+    ) {
 
       additionalKeywords.push(
         ...synonyms[keyword]
@@ -239,8 +496,11 @@ function findSections(sections, question) {
 
 
   keywords = [
+
     ...keywords,
-    ...additionalKeywords,
+
+    ...additionalKeywords
+
   ];
 
 
@@ -258,30 +518,66 @@ function findSections(sections, question) {
   );
 
 
-  // ========================================
-  // 5. 제목 + 내용 전체를 검색
-  // ========================================
+  // ==========================================================
+  // 5. Section별 점수 계산
+  // ==========================================================
 
   const scored = [];
 
 
-  for (const section of sections) {
+  for (
+    const section of sections
+  ) {
 
     const titleText =
-      normalize(section.title);
+      normalize(
+        section.title
+      );
+
 
     const contentText =
-      normalize(section.content);
+      normalize(
+        section.content
+      );
+
+
+    const compactTitle =
+      compact(
+        section.title
+      );
+
+
+    const compactContent =
+      compact(
+        section.content
+      );
 
 
     let score = 0;
 
 
-    for (const keyword of keywords) {
+    for (
+      const keyword of keywords
+    ) {
 
       const normalizedKeyword =
         normalize(keyword);
 
+
+      const compactKeyword =
+        compact(keyword);
+
+
+      if (
+        !normalizedKeyword
+      ) {
+        continue;
+      }
+
+
+      // ------------------------------------------------------
+      // 제목에 있으면 높은 점수
+      // ------------------------------------------------------
 
       if (
         titleText.includes(
@@ -289,34 +585,65 @@ function findSections(sections, question) {
         )
       ) {
 
-        // 제목에서 발견되면 높은 점수
-        score += 5;
+        score += 10;
+      }
 
-      } else if (
+
+      // 띄어쓰기 무시 제목 검색
+      else if (
+        compactTitle.includes(
+          compactKeyword
+        )
+      ) {
+
+        score += 10;
+      }
+
+
+      // ------------------------------------------------------
+      // 내용에 있으면 점수
+      // ------------------------------------------------------
+
+      if (
         contentText.includes(
           normalizedKeyword
         )
       ) {
 
-        // 본문에서 발견되면 점수
-        score += 2;
+        score += 3;
+      }
+
+
+      // 띄어쓰기 무시 내용 검색
+      else if (
+        compactContent.includes(
+          compactKeyword
+        )
+      ) {
+
+        score += 3;
       }
     }
 
 
-    if (score > 0) {
+    if (
+      score > 0
+    ) {
 
       scored.push({
+
         section,
-        score,
+
+        score
+
       });
     }
   }
 
 
-  // ========================================
-  // 6. 점수 높은 순서대로 정렬
-  // ========================================
+  // ==========================================================
+  // 6. 점수순 정렬
+  // ==========================================================
 
   scored.sort(
     (a, b) =>
@@ -324,15 +651,25 @@ function findSections(sections, question) {
   );
 
 
-  // ========================================
-  // 7. 관련 항목 최대 3개
-  // ========================================
+  console.log(
+    "검색 점수:",
+    scored.map(
+      item =>
+        `${item.section.number} ${item.section.title} = ${item.score}`
+    )
+  );
+
+
+  // ==========================================================
+  // 7. 관련 자료 최대 3개 반환
+  // ==========================================================
 
   const results =
     scored
       .slice(0, 3)
       .map(
-        item => item.section
+        item =>
+          item.section
       );
 
 
@@ -349,208 +686,388 @@ function findSections(sections, question) {
 }
 
 
-// ==========================================
-// API
-// ==========================================
+// ============================================================
+// Gemini 호출
+// ============================================================
 
-export default async function handler(req, res) {
+async function askGemini(
+  question,
+  relevantSections
+) {
 
-  if (req.method !== "POST") {
+  if (!GEMINI_API_KEY) {
 
-    return res.status(405).json({
-      error: "POST 요청만 허용됩니다.",
-    });
+    throw new Error(
+      "GEMINI_API_KEY 환경변수가 없습니다."
+    );
   }
 
 
-  try {
+  // ----------------------------------------------------------
+  // AI에게 전달할 자료 만들기
+  // ----------------------------------------------------------
 
-    const { message } = req.body;
+  const knowledgeText =
+    relevantSections
+      .map(section => {
 
-
-    if (
-      !message ||
-      typeof message !== "string" ||
-      !message.trim()
-    ) {
-
-      return res.status(400).json({
-        error: "질문을 입력해주세요.",
-      });
-    }
-
-
-    // ======================================
-    // 지식자료 읽기
-    // ======================================
-
-    const knowledge =
-      await loadKnowledge();
-
-
-    // ======================================
-    // 항목 분리
-    // ======================================
-
-    const sections =
-      extractSections(
-        knowledge
-      );
-
-
-    console.log(
-      "전체 항목 수:",
-      sections.length
-    );
-
-
-    // ======================================
-    // 여러 항목 검색
-    // ======================================
-
-    const matchedSections =
-      findSections(
-        sections,
-        message
-      );
-
-
-    // ======================================
-    // 검색 결과 없음
-    // ======================================
-
-    if (
-      !matchedSections ||
-      matchedSections.length === 0
-    ) {
-
-      return res.status(200).json({
-
-        answer:
-          "죄송합니다. 현재 제공된 업무자료에서는 해당 내용을 확인하기 어렵습니다.",
-
-      });
-    }
-
-
-    // ======================================
-    // 검색된 항목들을 각각 구분해서 전달
-    // ======================================
-
-    const referenceText =
-      matchedSections
-        .map(section => {
-
-          return `
-[${section.number} ${section.title}]
+        return `
+[${section.number}. ${section.title}]
 
 ${section.content}
 
 `;
 
-        })
-        .join("\n--------------------\n");
+      })
+      .join("\n");
 
 
-    console.log(
-      "Gemini에게 전달하는 항목:",
-      matchedSections.map(
-        s => `${s.number} ${s.title}`
-      )
-    );
+  // ----------------------------------------------------------
+  // 시스템 지침
+  // ----------------------------------------------------------
 
+  const systemInstruction = `
 
-    // ======================================
-    // Gemini 질문
-    // ======================================
+너는 한국도로교통공단 운전면허시험장 업무 안내 챗봇이다.
 
-    const prompt = `
-사용자 질문:
-${message}
+반드시 아래에 제공된 업무자료를 근거로 답변해야 한다.
 
-========================================
+중요 규칙:
 
-[관련 업무자료]
+1. 제공된 자료에 있는 내용만 사실로 답변한다.
 
-${referenceText}
+2. 자료에 없는 내용을 일반적인 상식이나 인터넷 정보로 추측해서 답하지 않는다.
 
-========================================
-
-위에 제공된 업무자료를 근거로 사용자 질문에 답변하세요.
-
-중요:
-
-1. 각 업무 항목을 반드시 구분해서 판단하세요.
-
-2. 서로 다른 항목의 내용을 합쳐서
-   하나의 업무처럼 설명하지 마세요.
-
-3. 사용자가 두 가지 이상의 교육이나 업무를
-   비교하거나 함께 질문했다면
-   각각을 별도로 설명하세요.
-
-4. "현장접수"와 "현장결제"는 완전히 다른 개념입니다.
-
-5. 자료에 "온라인사전예약 필수"라고 되어 있고
-   "현장접수 가능"이라고 명시되어 있지 않다면
-   현장접수가 가능하다고 말하지 마세요.
-
-6. 자료에 없는 내용을 추측하지 마세요.
-
-7. 자료에서 확인되지 않는 내용은
+3. 자료에 명시되지 않은 경우에는
    "제공된 자료에서는 확인되지 않습니다."
-   라고 답변하세요.
+   라고 안내한다.
 
-8. 사용자가 이해하기 쉽도록
-   필요한 경우 번호나 bullet point를 사용하세요.
+4. 사용자가 자연어로 질문하더라도 질문의 의미를 파악해서
+   제공된 자료와 연결한다.
 
-9. 답변은 자연스러운 한국어로 작성하세요.
+5. 비슷한 업무가 여러 개 있으면 서로 섞지 않는다.
+
+6. 특히 다음 두 교육은 반드시 구분한다.
+
+   - 응시 전 교통안전교육
+   - 특별교통안전교육
+
+7. 사용자가 음주운전 또는 술 때문에 면허가 정지/취소되었다고 질문하면
+   제공된 자료에 특별교통안전교육이 해당 상황과 연결되어 있다면
+   특별교통안전교육 내용을 기준으로 답변한다.
+
+8. 사용자가 두 가지 이상의 업무를 비교하면
+   각각을 구분해서 설명한다.
+
+9. 질문에 답할 때 필요한 경우
+   "대상자 / 예약방법 / 준비물 / 수수료 / 교육시간"
+   등의 항목으로 보기 쉽게 정리한다.
+
+10. 자료에 "온라인 사전예약 필수"라고 되어 있으면
+    현장접수 가능하다고 임의로 말하지 않는다.
+
+11. "당일 현장결제"와 "현장접수"는 서로 다른 의미이므로
+    혼동하지 않는다.
+
+12. 답변은 너무 길게 작성하지 말고
+    실제 민원인이 이해하기 쉽게 작성한다.
+
+13. 자료에 없는 내용은 자신 있게 만들어내지 않는다.
+
 `;
 
 
-    // ======================================
-    // Gemini 호출
-    // ======================================
 
-    const response =
-      await ai.models.generateContent({
+  // ----------------------------------------------------------
+  // Gemini Prompt
+  // ----------------------------------------------------------
 
-        model:
-          "gemini-3.5-flash-lite",
+  const prompt = `
 
-        contents:
-          prompt,
+${systemInstruction}
 
-        config: {
-          systemInstruction:
-            SYSTEM_INSTRUCTION,
+==================================================
+제공된 업무자료
+==================================================
+
+${knowledgeText}
+
+==================================================
+사용자 질문
+==================================================
+
+${question}
+
+==================================================
+답변
+==================================================
+
+위 업무자료만 근거로 사용자의 질문에 답변하세요.
+
+자료에 명시되지 않은 내용은 추측하지 마세요.
+
+`;
+
+
+  // ----------------------------------------------------------
+  // Gemini API
+  // ----------------------------------------------------------
+
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+
+  const response =
+    await fetch(
+      url,
+      {
+
+        method: "POST",
+
+        headers: {
+
+          "Content-Type":
+            "application/json"
+
         },
 
+        body: JSON.stringify({
+
+          contents: [
+
+            {
+
+              role: "user",
+
+              parts: [
+
+                {
+                  text: prompt
+                }
+
+              ]
+
+            }
+
+          ],
+
+          generationConfig: {
+
+            temperature: 0.2,
+
+            maxOutputTokens: 1000
+
+          }
+
+        })
+
+      }
+    );
+
+
+  // ----------------------------------------------------------
+  // API 오류 처리
+  // ----------------------------------------------------------
+
+  if (!response.ok) {
+
+    const errorText =
+      await response.text();
+
+
+    console.error(
+      "Gemini API 오류:",
+      errorText
+    );
+
+
+    throw new Error(
+      `Gemini API 오류 (${response.status})`
+    );
+  }
+
+
+  const data =
+    await response.json();
+
+
+  // ----------------------------------------------------------
+  // Gemini 답변 추출
+  // ----------------------------------------------------------
+
+  const answer =
+    data
+      ?.candidates?.[0]
+      ?.content?.parts?.[0]
+      ?.text;
+
+
+  if (!answer) {
+
+    console.error(
+      "Gemini 응답:",
+      JSON.stringify(data)
+    );
+
+
+    throw new Error(
+      "Gemini가 답변을 반환하지 않았습니다."
+    );
+  }
+
+
+  return answer.trim();
+}
+
+
+// ============================================================
+// Vercel API Handler
+// ============================================================
+
+export default async function handler(
+  req,
+  res
+) {
+
+  // ----------------------------------------------------------
+  // POST만 허용
+  // ----------------------------------------------------------
+
+  if (
+    req.method !== "POST"
+  ) {
+
+    return res
+      .status(405)
+      .json({
+
+        error:
+          "POST 요청만 사용할 수 있습니다."
+
       });
+  }
 
 
-    return res.status(200).json({
+  try {
 
-      answer:
-        response.text,
+    // --------------------------------------------------------
+    // 질문 가져오기
+    // --------------------------------------------------------
 
-    });
+    const question =
+      req.body?.question;
+
+
+    if (
+      !question ||
+      typeof question !== "string"
+    ) {
+
+      return res
+        .status(400)
+        .json({
+
+          error:
+            "질문을 입력해주세요."
+
+        });
+    }
+
+
+    // --------------------------------------------------------
+    // 지식자료 읽기
+    // --------------------------------------------------------
+
+    const knowledge =
+      loadKnowledge();
+
+
+    // --------------------------------------------------------
+    // Section으로 분리
+    // --------------------------------------------------------
+
+    const sections =
+      parseSections(
+        knowledge
+      );
+
+
+    console.log(
+      "전체 Section 수:",
+      sections.length
+    );
+
+
+    // --------------------------------------------------------
+    // 질문과 관련된 자료 검색
+    // --------------------------------------------------------
+
+    const relevantSections =
+      findSections(
+        sections,
+        question
+      );
+
+
+    // --------------------------------------------------------
+    // 관련 자료가 하나도 없는 경우
+    // --------------------------------------------------------
+
+    if (
+      relevantSections.length === 0
+    ) {
+
+      return res
+        .status(200)
+        .json({
+
+          answer:
+            "죄송합니다. 제공된 업무자료에서는 질문하신 내용에 대한 정보를 확인하기 어렵습니다."
+
+        });
+    }
+
+
+    // --------------------------------------------------------
+    // Gemini에게 질문
+    // --------------------------------------------------------
+
+    const answer =
+      await askGemini(
+        question,
+        relevantSections
+      );
+
+
+    // --------------------------------------------------------
+    // 결과 반환
+    // --------------------------------------------------------
+
+    return res
+      .status(200)
+      .json({
+
+        answer
+
+      });
 
 
   } catch (error) {
 
     console.error(
-      "Gemini API Error:",
+      "챗봇 오류:",
       error
     );
 
 
-    return res.status(500).json({
+    return res
+      .status(500)
+      .json({
 
-      error:
-        error.message ||
-        "Gemini API 호출 중 오류가 발생했습니다.",
+        error:
+          error.message ||
+          "챗봇 처리 중 오류가 발생했습니다."
 
-    });
+      });
   }
 }
