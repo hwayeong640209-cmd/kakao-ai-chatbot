@@ -30,10 +30,10 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("Gemini API Error:", error);
 
     return res.status(500).json({
-      error: "Gemini API 호출 중 오류가 발생했습니다.",
+      error: error.message || "Gemini API 호출 중 오류가 발생했습니다.",
     });
   }
 }
