@@ -1,39 +1,68 @@
 import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
+apiKey: process.env.GEMINI_API_KEY,
 });
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({
-      error: "POST 요청만 허용됩니다.",
-    });
-  }
+// CORS
+res.setHeader("Access-Control-Allow-Origin", "*");
+res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  try {
-    const { message } = req.body;
+// OPTIONS
+if (req.method === "OPTIONS") {
+return res.status(200).end();
+}
 
-    if (!message || typeof message !== "string") {
-      return res.status(400).json({
-        error: "메시지를 입력해주세요.",
-      });
-    }
+// POST만 허용
+if (req.method !== "POST") {
+return res.status(405).json({
+answer: "POST 요청만 허용됩니다.",
+});
+}
 
-    const interaction = await ai.interactions.create({
-      model: "gemini-3.5-flash-lite",
-      input: message,
-    });
+try {
+const { message } = req.body || {};
 
-    return res.status(200).json({
-      answer: interaction.output_text,
-    });
+```
+// 질문 확인
+if (!message || typeof message !== "string" || !message.trim()) {
+  return res.status(400).json({
+    answer: "메시지를 입력해주세요.",
+  });
+}
 
-  } catch (error) {
-    console.error("Gemini API Error:", error);
+// Gemini Interactions API
+const interaction = await ai.interactions.create({
+  model: "gemini-3.5-flash",
+  input: message.trim(),
+});
 
-    return res.status(500).json({
-      error: error.message || "Gemini API 호출 중 오류가 발생했습니다.",
-    });
-  }
+console.log("Gemini interaction:", interaction);
+
+const answer = interaction.output_text;
+
+if (!answer) {
+  return res.status(500).json({
+    answer: "Gemini에서 답변을 받지 못했습니다.",
+  });
+}
+
+return res.status(200).json({
+  answer: answer.trim(),
+});
+```
+
+} catch (error) {
+console.error("Gemini API Error:", error);
+
+```
+return res.status(500).json({
+  answer: "Gemini API 호출 중 오류가 발생했습니다.",
+  error: error?.message || String(error),
+});
+```
+
+}
 }
