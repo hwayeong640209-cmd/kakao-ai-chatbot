@@ -1,628 +1,377 @@
+// api/chat.js
+
 import fs from "fs";
 import path from "path";
 
-/*
-===========================================================
-  한국도로교통공단 카카오톡 챗봇
-  - 자료 우선순위 검색
-  - 고령운전자 Q&A 우선 검색
-  - 기관 구분 질문 별도 처리
-  - 429 자동 재시도
-  - Gemini 전달 자료 최소화
-  - 긴 답변 방지
-  - 자료 밖의 내용 추측 금지
-===========================================================
-*/
-
-// =========================================================
-// 1. 기본 설정
-// =========================================================
-
-const KNOWLEDGE_DIR = path.join(process.cwd(), "knowledge");
-
-const MODEL =
-  process.env.GEMINI_MODEL || "gemini-3.5-flash";
+/* =========================================================
+   기본 설정
+   ========================================================= */
 
 const API_KEY = process.env.GEMINI_API_KEY;
 
-// Gemini 요청 횟수
-const MAX_RETRY = 4;
+// GEMINI_MODEL 환경변수는 사용하지 않음.
+// 모델은 코드에서 고정.
+const MODEL = "gemini-2.5-flash";
 
-// Gemini에 전달할 최대 문자 수
-const MAX_CONTEXT_LENGTH = 12000;
-
-// 검색 결과 하나당 최대 문자 수
-const MAX_CHUNK_LENGTH = 3500;
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY = 1500;
 
 
-// =========================================================
-// 2. 파일명
-// =========================================================
+/* =========================================================
+   Knowledge 파일
+   ========================================================= */
+
+const KNOWLEDGE_DIR = path.join(process.cwd(), "knowledge");
 
 const FILES = {
-  MAIN: "챗봇22.txt",
-  ELDERLY: "고령운전자 교통안전교육 관련 Q&A.txt",
-  DAILY: "일상 질문 Q&A.txt",
-  LAW: "한국도로교통공단법.txt",
+  main: "챗봇22.txt",
+  senior: "고령운전자 교통안전교육 관련 Q&A.txt",
+  organization: "한국도로교통공단법.txt",
+  daily: "일상 질문 Q&A.txt",
 };
 
 
-// =========================================================
-// 3. 파일 읽기
-// =========================================================
+/* =========================================================
+   파일 읽기
+   ========================================================= */
 
-function readKnowledge(filename) {
+function readKnowledgeFile(filename) {
   try {
     const filePath = path.join(KNOWLEDGE_DIR, filename);
 
     if (!fs.existsSync(filePath)) {
+      console.error(`Knowledge file not found: ${filename}`);
       return "";
     }
 
     return fs.readFileSync(filePath, "utf8");
   } catch (error) {
-    console.error(`파일 읽기 오류: ${filename}`, error);
+    console.error(`Failed to read ${filename}:`, error);
     return "";
   }
 }
 
 
-// =========================================================
-// 4. 질문 정규화
-// =========================================================
-
-function normalize(text = "") {
-  return text
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-
-// =========================================================
-// 5. 질문 유형 판별
-// =========================================================
-
-function detectQuestionType(question) {
-  const q = normalize(question);
-
-  // -------------------------------
-  // 고령운전자
-  // -------------------------------
-
-  const elderlyKeywords = [
-    "75세",
-    "75 세",
-    "고령",
-    "고령자",
-    "고령운전자",
-    "고령 운전자",
-    "고령자교육",
-    "고령자 교육",
-    "고령운전자교육",
-    "고령운전자 교육",
-    "치매검사",
-    "치매안심센터",
-    "인지선별검사",
-    "cist",
-    "인지검사",
-  ];
-
-  if (elderlyKeywords.some(k => q.includes(k))) {
-    return "ELDERLY";
-  }
-
-
-  // -------------------------------
-  // 기관 차이
-  // -------------------------------
-
-  const institutionKeywords = [
-    "도로교통공단",
-    "도로공사",
-    "한국도로공사",
-    "교통안전공단",
-    "한국교통안전공단",
-    "도로교통공단이랑",
-    "도로공사랑",
-    "공단이랑",
-    "공사랑",
-    "기관 차이",
-    "기관차이",
-    "무슨 차이",
-    "뭐가 달라",
-    "어디가 다른",
-  ];
-
-  if (institutionKeywords.some(k => q.includes(k))) {
-    return "INSTITUTION";
-  }
-
-
-  // -------------------------------
-  // 법령
-  // -------------------------------
-
-  const lawKeywords = [
-    "법령",
-    "법률",
-    "법 조항",
-    "조문",
-    "시행령",
-    "시행규칙",
-    "법적 근거",
-    "법적으로",
-  ];
-
-  if (lawKeywords.some(k => q.includes(k))) {
-    return "LAW";
-  }
-
-
-  // -------------------------------
-  // 면허시험 / 면허취득
-  // -------------------------------
-
-  const licenseKeywords = [
-    "면허",
-    "운전면허",
-    "갱신",
-    "적성검사",
-    "재발급",
-    "기능시험",
-    "학과시험",
-    "필기시험",
-    "도로주행",
-    "연습면허",
-    "면허취득",
-    "면허 따",
-    "시험 예약",
-    "시험접수",
-    "예약",
-  ];
-
-  if (licenseKeywords.some(k => q.includes(k))) {
-    return "LICENSE";
-  }
-
-
-  // -------------------------------
-  // 교통안전교육
-  // -------------------------------
-
-  const educationKeywords = [
-    "교통안전교육",
-    "안전교육",
-    "응시전교육",
-    "응시 전 교육",
-    "특별교통안전교육",
-    "교육 예약",
-    "교육 신청",
-  ];
-
-  if (educationKeywords.some(k => q.includes(k))) {
-    return "EDUCATION";
-  }
-
-
-  return "GENERAL";
-}
-
-
-// =========================================================
-// 6. 텍스트를 작은 단위로 분리
-// =========================================================
-
-function splitIntoChunks(text) {
-  if (!text) return [];
-
-  const sections = text
-    .split(/\n\s*\n/)
-    .map(x => x.trim())
-    .filter(Boolean);
-
-  const chunks = [];
-
-  for (const section of sections) {
-    if (section.length <= MAX_CHUNK_LENGTH) {
-      chunks.push(section);
-      continue;
-    }
-
-    for (let i = 0; i < section.length; i += MAX_CHUNK_LENGTH) {
-      chunks.push(
-        section.substring(i, i + MAX_CHUNK_LENGTH)
-      );
-    }
-  }
-
-  return chunks;
-}
-
-
-// =========================================================
-// 7. 키워드 추출
-// =========================================================
-
-function extractKeywords(question) {
-  const q = normalize(question);
-
-  const stopWords = [
-    "이",
-    "가",
-    "은",
-    "는",
-    "을",
-    "를",
-    "에",
-    "에서",
-    "으로",
-    "로",
-    "하고",
-    "그리고",
-    "어떻게",
-    "무엇",
-    "뭐",
-    "어디",
-    "알려줘",
-    "알려주세요",
-    "싶어",
-    "싶습니다",
-    "해주세요",
-    "하려면",
-    "할까요",
-    "있나요",
-    "있어",
-    "인가요",
-  ];
-
-  return q
-    .replace(/[?!.,]/g, " ")
-    .split(/\s+/)
-    .filter(word => word.length >= 2)
-    .filter(word => !stopWords.includes(word));
-}
-
-
-// =========================================================
-// 8. 관련도 점수 계산
-// =========================================================
-
-function scoreChunk(chunk, keywords) {
-  const text = normalize(chunk);
-
-  let score = 0;
-
-  for (const keyword of keywords) {
-
-    if (text.includes(keyword)) {
-      score += 3;
-    }
-
-    // 긴 키워드는 추가 가중치
-    if (
-      keyword.length >= 4 &&
-      text.includes(keyword)
-    ) {
-      score += 2;
-    }
-  }
-
-  return score;
-}
-
-
-// =========================================================
-// 9. 관련 자료 검색
-// =========================================================
-
-function searchKnowledge(text, question, maxResults = 4) {
-
-  if (!text) return [];
-
-  const keywords = extractKeywords(question);
-
-  const chunks = splitIntoChunks(text);
-
-  const scored = chunks.map(chunk => ({
-    chunk,
-    score: scoreChunk(chunk, keywords),
-  }));
-
-  return scored
-    .filter(item => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, maxResults)
-    .map(item => item.chunk);
-}
-
-
-// =========================================================
-// 10. 질문 유형별 자료 선택
-// =========================================================
-
-function buildContext(question) {
-
-  const type = detectQuestionType(question);
-
-  let primary = "";
-  let secondary = "";
-
-  // ---------------------------------------------
-  // 고령운전자
-  // ---------------------------------------------
-
-  if (type === "ELDERLY") {
-
-    const elderly = readKnowledge(FILES.ELDERLY);
-    const main = readKnowledge(FILES.MAIN);
-
-    const elderlyResults =
-      searchKnowledge(
-        elderly,
-        question,
-        4
-      );
-
-    const mainResults =
-      searchKnowledge(
-        main,
-        question,
-        2
-      );
-
-    primary = elderlyResults.join("\n\n");
-    secondary = mainResults.join("\n\n");
-
-    return {
-      type,
-      context: limitContext(
-        `[고령운전자 Q&A - 우선자료]\n${primary}\n\n` +
-        `[챗봇22 - 보조자료]\n${secondary}`
-      ),
-    };
-  }
-
-
-  // ---------------------------------------------
-  // 기관 차이
-  // ---------------------------------------------
-
-  if (type === "INSTITUTION") {
-
-    const main = readKnowledge(FILES.MAIN);
-    const daily = readKnowledge(FILES.DAILY);
-
-    const mainResults =
-      searchKnowledge(
-        main,
-        question,
-        5
-      );
-
-    const dailyResults =
-      searchKnowledge(
-        daily,
-        question,
-        3
-      );
-
-    primary = mainResults.join("\n\n");
-    secondary = dailyResults.join("\n\n");
-
-    return {
-      type,
-      context: limitContext(
-        `[기관 구분 관련 자료]\n${primary}\n\n` +
-        `[보조 Q&A]\n${secondary}`
-      ),
-    };
-  }
-
-
-  // ---------------------------------------------
-  // 법령
-  // ---------------------------------------------
-
-  if (type === "LAW") {
-
-    const law = readKnowledge(FILES.LAW);
-    const main = readKnowledge(FILES.MAIN);
-
-    const lawResults =
-      searchKnowledge(
-        law,
-        question,
-        5
-      );
-
-    const mainResults =
-      searchKnowledge(
-        main,
-        question,
-        2
-      );
-
-    return {
-      type,
-      context: limitContext(
-        `[한국도로교통공단법]\n${lawResults.join("\n\n")}\n\n` +
-        `[챗봇22 보조자료]\n${mainResults.join("\n\n")}`
-      ),
-    };
-  }
-
-
-  // ---------------------------------------------
-  // 면허 / 시험
-  // ---------------------------------------------
-
-  if (
-    type === "LICENSE" ||
-    type === "EDUCATION"
-  ) {
-
-    const main = readKnowledge(FILES.MAIN);
-
-    const mainResults =
-      searchKnowledge(
-        main,
-        question,
-        5
-      );
-
-    return {
-      type,
-      context: limitContext(
-        `[챗봇22 - 주요 안내자료]\n` +
-        mainResults.join("\n\n")
-      ),
-    };
-  }
-
-
-  // ---------------------------------------------
-  // 일반 질문
-  // ---------------------------------------------
-
-  if (type === "GENERAL") {
-
-    const daily = readKnowledge(FILES.DAILY);
-
-    const dailyResults =
-      searchKnowledge(
-        daily,
-        question,
-        4
-      );
-
-    return {
-      type,
-      context: limitContext(
-        `[일상 질문 Q&A]\n` +
-        dailyResults.join("\n\n")
-      ),
-    };
-  }
-
-
+/* =========================================================
+   모든 Knowledge 읽기
+   ========================================================= */
+
+function loadKnowledge() {
   return {
-    type,
-    context: "",
+    main: readKnowledgeFile(FILES.main),
+    senior: readKnowledgeFile(FILES.senior),
+    organization: readKnowledgeFile(FILES.organization),
+    daily: readKnowledgeFile(FILES.daily),
   };
 }
 
 
-// =========================================================
-// 11. Context 최대 크기 제한
-// =========================================================
+/* =========================================================
+   질문 유형 판단
+   ========================================================= */
 
-function limitContext(text) {
+function detectQuestionType(question) {
+  const q = question.toLowerCase();
 
-  if (!text) return "";
+  // 고령운전자 관련 질문
+  const seniorKeywords = [
+    "고령",
+    "고령자",
+    "어르신",
+    "75세",
+    "75세 이상",
+    "65세",
+    "적성검사",
+    "고령운전자",
+    "치매안심센터",
+    "인지선별검사",
+    "인지검사",
+    "고령자교육",
+    "고령운전자교육",
+  ];
 
-  if (text.length <= MAX_CONTEXT_LENGTH) {
-    return text;
+  // 기관 구분 관련 질문
+  const organizationKeywords = [
+    "도로교통공단",
+    "한국도로교통공단",
+    "도로공사",
+    "한국도로공사",
+    "교통안전공단",
+    "한국교통안전공단",
+    "공단이랑",
+    "공단과",
+    "공사랑",
+    "공사와",
+    "기관 차이",
+    "기관차이",
+    "어느 기관",
+    "소속 기관",
+  ];
+
+  // 일상적인 질문
+  const dailyKeywords = [
+    "안녕",
+    "고마워",
+    "감사",
+    "반가워",
+    "누구야",
+    "뭐야",
+    "도와줘",
+  ];
+
+  if (seniorKeywords.some((keyword) => q.includes(keyword))) {
+    return "senior";
   }
 
-  return text.substring(
-    0,
-    MAX_CONTEXT_LENGTH
-  );
+  if (organizationKeywords.some((keyword) => q.includes(keyword))) {
+    return "organization";
+  }
+
+  if (dailyKeywords.some((keyword) => q.includes(keyword))) {
+    return "daily";
+  }
+
+  return "general";
 }
 
 
-// =========================================================
-// 12. Gemini System Prompt
-// =========================================================
+/* =========================================================
+   질문과 가장 관련된 자료 선택
+   ========================================================= */
 
-function buildPrompt(question, type, context) {
+function selectKnowledge(question, knowledge) {
+  const type = detectQuestionType(question);
 
+  let selected = [];
+
+  /*
+   * 가장 중요한 원칙
+   *
+   * 1. 챗봇22는 항상 우선
+   * 2. 고령 질문 → 챗봇22 + 고령자 Q&A
+   * 3. 기관 질문 → 챗봇22 + 공단법
+   * 4. 일반 질문 → 챗봇22 + 필요할 때 일상 Q&A
+   */
+
+  if (type === "senior") {
+    selected = [
+      {
+        name: FILES.main,
+        priority: 1,
+        content: knowledge.main,
+      },
+      {
+        name: FILES.senior,
+        priority: 2,
+        content: knowledge.senior,
+      },
+    ];
+  }
+
+  else if (type === "organization") {
+    selected = [
+      {
+        name: FILES.main,
+        priority: 1,
+        content: knowledge.main,
+      },
+      {
+        name: FILES.organization,
+        priority: 2,
+        content: knowledge.organization,
+      },
+    ];
+  }
+
+  else if (type === "daily") {
+    selected = [
+      {
+        name: FILES.daily,
+        priority: 1,
+        content: knowledge.daily,
+      },
+    ];
+  }
+
+  else {
+    selected = [
+      {
+        name: FILES.main,
+        priority: 1,
+        content: knowledge.main,
+      },
+      {
+        name: FILES.senior,
+        priority: 2,
+        content: knowledge.senior,
+      },
+      {
+        name: FILES.organization,
+        priority: 3,
+        content: knowledge.organization,
+      },
+      {
+        name: FILES.daily,
+        priority: 4,
+        content: knowledge.daily,
+      },
+    ];
+  }
+
+  return selected.filter((item) => item.content);
+}
+
+
+/* =========================================================
+   자료 길이 제한
+   ========================================================= */
+
+function limitKnowledge(text, maxLength = 30000) {
+  if (!text) return "";
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return text.substring(0, maxLength);
+}
+
+
+/* =========================================================
+   Knowledge Prompt 생성
+   ========================================================= */
+
+function buildKnowledgePrompt(question, selectedKnowledge) {
+  let result = "";
+
+  for (const item of selectedKnowledge) {
+    result += `
+==================================================
+[자료 우선순위 ${item.priority}]
+파일명: ${item.name}
+==================================================
+
+${limitKnowledge(item.content)}
+
+`;
+  }
+
+  return result;
+}
+
+
+/* =========================================================
+   시스템 프롬프트
+   ========================================================= */
+
+function buildSystemPrompt(question, knowledgeText) {
   return `
-당신은 한국도로교통공단 운전면허시험장 안내 챗봇입니다.
+너는 한국도로교통공단 운전면허 및 교통안전 관련 안내를 도와주는 챗봇이다.
 
-반드시 아래 제공된 자료를 기준으로 답변하세요.
+아래에 제공된 업무자료를 반드시 근거로 답변한다.
 
-[가장 중요한 원칙]
+[가장 중요한 답변 원칙]
 
-1. 제공된 자료에 없는 내용을 만들어내지 마세요.
-2. 일반적인 상식이나 인터넷 지식을 추가하지 마세요.
-3. 자료끼리 내용이 겹치면 질문 유형에 맞는 우선자료를 먼저 사용하세요.
-4. 질문에 직접 필요한 내용만 답변하세요.
-5. 관련 없는 자료를 길게 나열하지 마세요.
-6. 사용자가 요청하지 않았다면 전체 면허취득 절차를 설명하지 마세요.
-7. 사용자가 요청하지 않았다면 수많은 면제조건이나 다른 시험 종류를 설명하지 마세요.
-8. 답변은 가능한 한 짧고 이해하기 쉽게 작성하세요.
-9. 자료에 정확한 전화번호, 준비물, 비용, 절차가 있으면 자료의 내용을 그대로 활용하세요.
-10. 자료에 없는 내용이면 반드시
-   "제공된 자료에서 확인되지 않습니다."
-   라고 답하세요.
+1. "챗봇22.txt"를 가장 중요한 실제 안내자료로 취급한다.
 
-[질문 유형]
-${type}
+2. 고령운전자 관련 질문의 경우:
+   - 먼저 챗봇22.txt 내용을 기준으로 답한다.
+   - 부족하거나 구체적인 고령운전자 교육 정보가 필요한 경우
+     "고령운전자 교통안전교육 관련 Q&A.txt"를 보조자료로 사용한다.
 
-[사용자 질문]
+3. 한국도로교통공단, 한국도로공사, 한국교통안전공단 등
+   기관의 차이를 묻는 질문은:
+   - 먼저 챗봇22.txt를 기준으로 답한다.
+   - 필요한 경우 "한국도로교통공단법.txt"를 보조자료로 사용한다.
+
+4. 일상적인 인사나 간단한 대화는 "일상 질문 Q&A.txt"를 참고한다.
+
+5. 자료 간 내용이 다를 경우:
+   - 우선순위가 높은 자료의 내용을 따른다.
+   - 챗봇22.txt가 있으면 챗봇22.txt를 우선한다.
+   - 보조자료를 이용해 임의로 내용을 확장하지 않는다.
+
+6. 제공된 자료에 없는 내용은 추측하거나 만들어내지 않는다.
+
+7. 법률, 교육시간, 수수료, 예약방법, 전화번호, 주소 등
+   구체적인 정보는 자료에 있는 경우에만 안내한다.
+
+8. 사용자가 단순한 질문을 하면 전체 자료를 장황하게 설명하지 않는다.
+
+9. 질문에 직접 필요한 내용만 답한다.
+
+10. 일반적으로 3~6문장 또는 짧은 bullet 형태로 답한다.
+
+11. 사용자가 "자세히 알려줘", "전체 절차 알려줘" 등의 요청을 했을 때만
+    상세한 내용을 제공한다.
+
+12. 질문이 명확하면 불필요한 확인 질문을 하지 않는다.
+
+13. "제공된 자료에서는 확인되지 않습니다"라고 답해야 하는 경우에는
+    정말로 제공된 자료에서 답을 찾을 수 없을 때만 사용한다.
+
+14. 답변에서 "챗봇22.txt", "보조자료", "knowledge 파일" 등의
+    내부 자료명은 사용자에게 불필요하다면 언급하지 않는다.
+
+15. 답변은 실제 민원 안내를 받는 사람이 이해하기 쉬운 자연스러운 한국어로 작성한다.
+
+16. 사용자가 묻지 않은 운전면허 취득 절차 전체를 보여주지 않는다.
+
+17. 특히 "75세인데 면허 갱신하려면?"처럼 특정 질문에는
+    질문과 직접 관련된 고령운전자 갱신·교육 내용만 우선적으로 답한다.
+
+18. 동일한 내용이나 문장을 반복하지 않는다.
+
+19. 자료에 URL이 있는 경우 자료에 적힌 URL을 그대로 안내할 수 있다.
+
+20. 전화번호도 자료에 있는 번호만 사용한다.
+
+--------------------------------------------------
+사용자 질문
+--------------------------------------------------
+
 ${question}
 
-[참고자료]
-${context || "관련 자료를 찾지 못했습니다."}
+--------------------------------------------------
+참고 업무자료
+--------------------------------------------------
 
-[답변 작성 규칙]
+${knowledgeText}
 
-- 단순 질문: 2~5문장
-- 절차 질문: 핵심 단계 3~6개 정도
-- 전화번호/예약 질문: 필요한 전화번호와 예약방법만
-- "자세히 알려줘"라고 요청한 경우에만 상세하게 설명
-- 질문과 직접 관련 없는 자료는 절대 덧붙이지 마세요.
-- 마크다운은 필요한 경우에만 사용하세요.
-- 답변 마지막에 불필요한 설명이나 추측을 붙이지 마세요.
+--------------------------------------------------
+최종 답변 작성
+--------------------------------------------------
 
-특히 고령운전자 질문인 경우:
-고령운전자 Q&A가 우선자료입니다.
-챗봇22 자료는 고령운전자 Q&A에 필요한 내용이 없을 때만 보조적으로 사용하세요.
+위 자료를 근거로 사용자 질문에 직접 답변하라.
 
-특히 기관 차이 질문인 경우:
-한국도로교통공단, 한국도로공사, 한국교통안전공단 등을 혼동하지 말고
-참고자료에 있는 기관 설명을 기준으로 비교하세요.
-
-이제 질문에 답변하세요.
+불필요한 전체 자료 나열 금지.
+질문과 관계없는 시험 절차나 교육 내용을 추가하지 말 것.
 `;
 }
 
 
-// =========================================================
-// 13. Gemini 호출
-// =========================================================
+/* =========================================================
+   Gemini API 호출
+   ========================================================= */
 
 async function callGemini(prompt) {
-
   if (!API_KEY) {
-    throw new Error(
-      "GEMINI_API_KEY 환경변수가 없습니다."
-    );
+    throw new Error("GEMINI_API_KEY가 설정되지 않았습니다.");
   }
 
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
 
-
   let lastError = null;
 
-
-  for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
-
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-
       const response = await fetch(url, {
-
         method: "POST",
-
         headers: {
           "Content-Type": "application/json",
         },
-
         body: JSON.stringify({
-
           contents: [
             {
               role: "user",
@@ -635,225 +384,212 @@ async function callGemini(prompt) {
           ],
 
           generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 700,
-            topP: 0.8,
+            temperature: 0.15,
+            maxOutputTokens: 800,
           },
-
         }),
-
       });
 
-
-      // -------------------------------
-      // 정상 응답
-      // -------------------------------
+      const data = await response.json();
 
       if (response.ok) {
+        const answer =
+          data?.candidates?.[0]?.content?.parts
+            ?.map((part) => part.text || "")
+            .join("")
+            .trim();
 
-        const data =
-          await response.json();
-
-        const text =
-          data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        if (!text) {
-          throw new Error(
-            "Gemini 응답에 텍스트가 없습니다."
-          );
+        if (answer) {
+          return answer;
         }
 
-        return text.trim();
+        throw new Error("Gemini 응답 내용이 없습니다.");
       }
 
+      const errorMessage =
+        data?.error?.message ||
+        `Gemini API 오류 (${response.status})`;
 
-      // -------------------------------
-      // 429
-      // -------------------------------
+      lastError = new Error(errorMessage);
 
+      /*
+       * 429인 경우 잠시 기다렸다가 다시 요청
+       */
       if (response.status === 429) {
+        if (attempt < MAX_RETRIES - 1) {
+          const delay =
+            RETRY_BASE_DELAY * Math.pow(2, attempt);
 
-        const retryAfter =
-          response.headers.get("retry-after");
-
-        let waitTime =
-          retryAfter
-            ? Number(retryAfter) * 1000
-            : Math.pow(2, attempt) * 1500;
-
-        // 너무 오래 기다리지 않도록 제한
-        waitTime =
-          Math.min(waitTime, 10000);
-
-        console.log(
-          `Gemini 429 - ${attempt + 1}회 재시도`
-        );
-
-        await sleep(waitTime);
-
-        continue;
+          await sleep(delay);
+          continue;
+        }
       }
 
-
-      // -------------------------------
-      // 기타 오류
-      // -------------------------------
-
-      const errorText =
-        await response.text();
-
-      lastError =
-        new Error(
-          `Gemini API 오류 ${response.status}: ${errorText}`
-        );
-
+      /*
+       * 400 / 401 / 403 등은 재시도해도 해결되지 않는 경우가 많으므로
+       * 바로 종료
+       */
       break;
 
     } catch (error) {
-
       lastError = error;
 
-      if (attempt < MAX_RETRY - 1) {
+      if (attempt < MAX_RETRIES - 1) {
+        const delay =
+          RETRY_BASE_DELAY * Math.pow(2, attempt);
 
-        const waitTime =
-          Math.min(
-            Math.pow(2, attempt) * 1000,
-            8000
-          );
-
-        await sleep(waitTime);
-
+        await sleep(delay);
+        continue;
       }
-
     }
-
   }
 
-
-  throw lastError ||
-    new Error("Gemini API 호출 실패");
+  throw lastError || new Error("Gemini API 호출에 실패했습니다.");
 }
 
 
-// =========================================================
-// 14. sleep
-// =========================================================
+/* =========================================================
+   Sleep
+   ========================================================= */
 
 function sleep(ms) {
-  return new Promise(
-    resolve => setTimeout(resolve, ms)
-  );
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 
-// =========================================================
-// 15. 답변 후처리
-// =========================================================
+/* =========================================================
+   Gemini 실패 시 간단한 자료 기반 답변
+   ========================================================= */
 
-function cleanAnswer(answer) {
+function fallbackAnswer(question, knowledge) {
+  const type = detectQuestionType(question);
 
-  if (!answer) {
-    return "제공된 자료에서 확인되지 않습니다.";
-  }
+  /*
+   * 429 등으로 Gemini를 사용할 수 없을 때
+   * 최소한 자주 묻는 질문은 자료 기반으로 답할 수 있도록 한다.
+   */
 
+  const q = question.toLowerCase();
 
-  let result = answer.trim();
+  // -----------------------------------------
+  // 고령운전자
+  // -----------------------------------------
 
-
-  // Gemini가 이상한 접두어를 붙이는 경우 제거
-  result = result
-    .replace(/^답변\s*[:：]\s*/i, "")
-    .replace(/^최종답변\s*[:：]\s*/i, "");
-
-
-  // 지나치게 많은 빈 줄 제거
-  result =
-    result.replace(/\n{3,}/g, "\n\n");
-
-
-  // 너무 긴 답변 방지
-  // 단, 문장이 중간에서 잘리지 않도록 마지막 줄 단위로 정리
-  if (result.length > 2500) {
-
-    result =
-      result.substring(0, 2500);
-
-    const lastPeriod =
-      Math.max(
-        result.lastIndexOf("."),
-        result.lastIndexOf("다."),
-        result.lastIndexOf("\n")
+  if (
+    type === "senior" &&
+    (
+      q.includes("75세") ||
+      q.includes("고령") ||
+      q.includes("고령자") ||
+      q.includes("고령운전자")
+    )
+  ) {
+    if (
+      q.includes("온라인") ||
+      q.includes("교육") ||
+      q.includes("수강")
+    ) {
+      return (
+        "만 75세 이상 고령운전자의 교통안전교육은 " +
+        "온라인 또는 교육장 방문 방식으로 받을 수 있습니다. " +
+        "온라인 교육은 교통안전교육센터에서 수강할 수 있으며, " +
+        "교육장 교육은 사전예약이 필요합니다."
       );
+    }
 
-    if (lastPeriod > 500) {
-      result =
-        result.substring(
-          0,
-          lastPeriod + 1
-        );
+    if (
+      q.includes("갱신") ||
+      q.includes("적성검사") ||
+      q.includes("면허")
+    ) {
+      return (
+        "만 75세 이상 운전자는 면허 갱신(적성검사) 전에 " +
+        "고령운전자 교통안전교육을 이수해야 합니다. " +
+        "교육은 온라인 또는 교육장 방문 방식으로 받을 수 있습니다. " +
+        "구체적인 갱신 준비물과 절차는 자료에 안내된 내용을 기준으로 확인해야 합니다."
+      );
     }
   }
 
 
-  return result.trim();
-}
+  // -----------------------------------------
+  // 기관 구분
+  // -----------------------------------------
 
+  if (
+    type === "organization" &&
+    (
+      q.includes("도로교통공단") ||
+      q.includes("도로공사") ||
+      q.includes("교통안전공단")
+    )
+  ) {
+    /*
+     * 기관 차이는 챗봇22 또는 공단법에 정보가 있을 때만
+     * Gemini가 상세하게 정리하도록 하고,
+     * fallback에서는 임의의 기관 정보를 추가하지 않는다.
+     */
 
-// =========================================================
-// 16. Gemini 실패 시 간단한 자료 직접 답변
-// =========================================================
+    const main = knowledge.main || "";
+    const organization = knowledge.organization || "";
 
-function fallbackAnswer(question, type, context) {
-
-  if (!context) {
-    return "제공된 자료에서 확인되지 않습니다.";
-  }
-
-
-  // Gemini가 429로 계속 실패하더라도
-  // 자료 자체가 검색된 경우 최소한의 안내를 제공
-  //
-  // 여기서는 자료 전체를 그대로 출력하지 않고
-  // 첫 번째 관련 chunk만 사용한다.
-
-  const firstChunk =
-    context
-      .split("\n\n")
-      .filter(Boolean)
-      .find(x =>
-        !x.startsWith("[챗봇22") &&
-        !x.startsWith("[보조")
+    if (
+      main.includes("도로공사") ||
+      main.includes("도로교통공단")
+    ) {
+      return (
+        "한국도로교통공단과 한국도로공사는 서로 다른 기관입니다. " +
+        "주요 역할과 담당 업무가 다르므로, 질문하신 업무에 따라 " +
+        "담당 기관을 확인해야 합니다."
       );
+    }
 
-
-  if (!firstChunk) {
-    return "현재 챗봇 사용량이 일시적으로 많아 답변을 처리하지 못했습니다. 잠시 후 다시 질문해주세요.";
+    if (organization) {
+      return (
+        "한국도로교통공단에 관한 기관 정보는 제공된 자료를 기준으로 안내할 수 있습니다. " +
+        "다른 기관과의 구체적인 차이는 해당 자료에 확인되는 범위에서 안내됩니다."
+      );
+    }
   }
 
 
-  // 너무 긴 원문을 그대로 보여주지 않음
-  if (firstChunk.length <= 900) {
-    return firstChunk;
+  // -----------------------------------------
+  // 기능시험
+  // -----------------------------------------
+
+  if (
+    q.includes("기능시험") &&
+    (
+      q.includes("예약") ||
+      q.includes("온라인")
+    )
+  ) {
+    return (
+      "장내기능시험은 안전운전통합민원에서 온라인으로 예약할 수 있습니다. " +
+      "온라인 접수 가능 시간은 07:30~22:00입니다."
+    );
   }
 
+
+  // -----------------------------------------
+  // 기본 fallback
+  // -----------------------------------------
 
   return (
-    firstChunk.substring(0, 900) +
-    "\n\n자세한 내용은 관련 자료를 확인해주세요."
+    "현재 답변을 처리하는 데 일시적인 문제가 발생했습니다. " +
+    "잠시 후 다시 질문해 주세요."
   );
 }
 
 
-// =========================================================
-// 17. Vercel API Handler
-// =========================================================
+/* =========================================================
+   HTTP Handler
+   ========================================================= */
 
 export default async function handler(req, res) {
-
-  // ---------------------------------------------
-  // CORS
-  // ---------------------------------------------
-
+  /*
+   * CORS
+   */
   res.setHeader(
     "Access-Control-Allow-Origin",
     "*"
@@ -870,154 +606,125 @@ export default async function handler(req, res) {
   );
 
 
-  // OPTIONS
+  /*
+   * OPTIONS
+   */
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
 
-  // POST만 허용
+  /*
+   * POST만 허용
+   */
   if (req.method !== "POST") {
-
     return res.status(405).json({
-      answer:
-        "POST 요청만 사용할 수 있습니다.",
+      error: "POST 요청만 허용됩니다.",
     });
-
   }
 
 
   try {
-
-    // -------------------------------------------
-    // 질문 가져오기
-    // -------------------------------------------
-
     const question =
       typeof req.body?.question === "string"
         ? req.body.question.trim()
         : "";
 
 
+    /*
+     * 질문 없음
+     */
     if (!question) {
-
       return res.status(400).json({
-        answer:
-          "질문을 입력해주세요.",
+        error: "질문을 입력해주세요.",
       });
-
     }
 
 
-    // -------------------------------------------
-    // 질문 유형 + 자료 검색
-    // -------------------------------------------
-
-    const {
-      type,
-      context,
-    } = buildContext(question);
+    /*
+     * 너무 긴 질문 방지
+     */
+    const safeQuestion = question.substring(0, 2000);
 
 
-    console.log(
-      "질문:",
-      question
-    );
-
-    console.log(
-      "질문유형:",
-      type
-    );
-
-    console.log(
-      "Context 길이:",
-      context.length
-    );
+    /*
+     * Knowledge 로드
+     */
+    const knowledge = loadKnowledge();
 
 
-    // -------------------------------------------
-    // 자료가 전혀 없으면 Gemini 호출하지 않음
-    // -------------------------------------------
-
-    if (!context) {
-
-      return res.status(200).json({
-        answer:
-          "제공된 자료에서 확인되지 않습니다.",
-      });
-
-    }
-
-
-    // -------------------------------------------
-    // Gemini Prompt
-    // -------------------------------------------
-
-    const prompt =
-      buildPrompt(
-        question,
-        type,
-        context
+    /*
+     * 질문 유형에 따라 자료 선택
+     */
+    const selectedKnowledge =
+      selectKnowledge(
+        safeQuestion,
+        knowledge
       );
 
 
-    // -------------------------------------------
-    // Gemini 호출
-    // -------------------------------------------
+    /*
+     * Prompt용 자료 생성
+     */
+    const knowledgeText =
+      buildKnowledgePrompt(
+        safeQuestion,
+        selectedKnowledge
+      );
 
-    let answer;
 
+    /*
+     * 시스템 프롬프트
+     */
+    const prompt =
+      buildSystemPrompt(
+        safeQuestion,
+        knowledgeText
+      );
+
+
+    /*
+     * Gemini 호출
+     */
     try {
-
-      answer =
+      const answer =
         await callGemini(prompt);
 
-    } catch (geminiError) {
+      return res.status(200).json({
+        answer,
+      });
 
+    } catch (geminiError) {
       console.error(
-        "Gemini 최종 오류:",
+        "Gemini error:",
         geminiError
       );
 
 
-      // 429 등 Gemini 오류가 나더라도
-      // 자료 검색 자체는 성공했다면 fallback
-      answer =
+      /*
+       * Gemini가 429 등으로 실패하면
+       * 자료 기반 fallback
+       */
+      const fallback =
         fallbackAnswer(
-          question,
-          type,
-          context
+          safeQuestion,
+          knowledge
         );
+
+      return res.status(200).json({
+        answer: fallback,
+      });
     }
 
-
-    // -------------------------------------------
-    // 최종 답변 정리
-    // -------------------------------------------
-
-    answer =
-      cleanAnswer(answer);
-
-
-    return res.status(200).json({
-      answer,
-      type,
-    });
-
-
   } catch (error) {
-
     console.error(
-      "Chatbot Error:",
+      "Chatbot server error:",
       error
     );
 
-
     return res.status(500).json({
-      answer:
-        "오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+      error:
+        "챗봇 처리 중 오류가 발생했습니다.",
     });
-
   }
-
 }
