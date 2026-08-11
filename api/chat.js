@@ -7,15 +7,7 @@ const ai = new GoogleGenAI({
 });
 
 export default async function handler(req, res) {
-  // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
+  // POST만 허용
   if (req.method !== "POST") {
     return res.status(405).json({
       error: "POST 요청만 허용됩니다.",
@@ -23,6 +15,9 @@ export default async function handler(req, res) {
   }
 
   try {
+    // =========================
+    // 1. 사용자 질문 확인
+    // =========================
     const { message } = req.body || {};
 
     if (!message || typeof message !== "string") {
@@ -31,42 +26,41 @@ export default async function handler(req, res) {
       });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey) {
-      return res.status(500).json({
-        error: "GEMINI_API_KEY가 설정되지 않았습니다.",
-      });
-    }
-
-    // 챗봇22.txt 읽기
-    const filePath = path.join(process.cwd(), "챗봇22.txt");
+    // =========================
+    // 2. 챗봇22.txt 읽기
+    // =========================
+    const filePath = path.join(
+      process.cwd(),
+      "data",
+      "챗봇22.txt"
+    );
 
     const knowledge = fs.readFileSync(filePath, "utf8");
 
+    // =========================
+    // 3. Gemini에게 전달할 지침
+    // =========================
     const prompt = `
-너는 "한국도로교통공단 전남운전면허시험장 업무용 챗봇"이다.
+당신은 "한국도로교통공단 전남운전면허시험장 업무 안내 챗봇"입니다.
 
-아래 [업무자료]만을 근거로 사용자 질문에 답변한다.
+아래 [업무자료]에 있는 내용만을 근거로 답변하세요.
 
-절대로 업무자료에 없는 내용을 추측하거나 만들어내지 않는다.
+중요한 규칙:
 
-업무자료와 질문이 관련이 없으면 다음과 같이 답한다.
-
-"죄송합니다. 전남운전면허시험장 업무자료에 해당 내용이 없어 정확한 안내가 어렵습니다."
-
-답변할 때는 다음 원칙을 지킨다.
-
-1. 업무자료의 내용을 최우선으로 사용한다.
-2. 업무자료에 없는 수수료, 시간, 준비물, 절차 등을 임의로 만들지 않는다.
-3. 사용자가 묻는 내용과 직접 관련된 정보만 간결하게 답한다.
-4. 필요한 경우 순서대로 번호를 붙여 설명한다.
-5. 금액과 시간은 업무자료에 적힌 내용을 그대로 사용한다.
-6. "전남시험장", "전남운전면허시험장"은 같은 장소를 의미한다.
-7. 사용자가 나이, 면허종류, 취득하려는 면허 등을 말하면 해당 조건에 맞는 내용만 안내한다.
-8. 인사말에는 자연스럽게 응답한다.
-9. 답변 첫머리에 "[핵심]" 같은 불필요한 표시를 붙이지 않는다.
-10. 답변은 한국어로 한다.
+1. 반드시 [업무자료]를 최우선으로 사용하세요.
+2. 업무자료에 없는 내용은 추측해서 답변하지 마세요.
+3. 일반적인 상식이나 인터넷에서 알고 있는 내용을 임의로 추가하지 마세요.
+4. 사용자의 질문에 필요한 내용만 쉽고 정확하게 설명하세요.
+5. 업무자료에 정확한 답이 없으면
+   "제공된 업무자료에서 정확한 내용을 확인하기 어렵습니다."
+   라고 답하세요.
+6. 서로 다른 업무의 내용을 섞어서 답변하지 마세요.
+7. 특히 면허 종류, 나이, 적성검사, 갱신, 시험 면제 여부, 수수료 등은 업무자료에 적힌 조건을 정확하게 구분하세요.
+8. 질문이 애매하면 필요한 정보를 먼저 물어보세요.
+9. 인사나 간단한 대화에는 자연스럽게 응답해도 됩니다.
+10. 답변은 한국어로 하세요.
+11. 답변에 [핵심], [주의사항] 같은 불필요한 태그를 붙이지 마세요.
+12. 업무자료에 있는 URL은 필요할 경우 그대로 안내할 수 있습니다.
 
 [업무자료]
 ${knowledge}
@@ -75,11 +69,17 @@ ${knowledge}
 ${message}
 `;
 
+    // =========================
+    // 4. Gemini 호출
+    // =========================
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash-lite",
       contents: prompt,
     });
 
+    // =========================
+    // 5. 답변 추출
+    // =========================
     const answer = response.text;
 
     if (!answer) {
@@ -88,6 +88,9 @@ ${message}
       });
     }
 
+    // =========================
+    // 6. 정상적인 JSON 응답
+    // =========================
     return res.status(200).json({
       answer: answer.trim(),
     });
@@ -97,7 +100,10 @@ ${message}
 
     return res.status(500).json({
       error: "서버에서 오류가 발생했습니다.",
-      detail: error.message,
+      detail:
+        process.env.NODE_ENV === "development"
+          ? error.message
+          : undefined,
     });
   }
 }
