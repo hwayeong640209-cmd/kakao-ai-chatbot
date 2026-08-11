@@ -1,15 +1,12 @@
 export default async function handler(req, res) {
-// CORS
 res.setHeader("Access-Control-Allow-Origin", "*");
 res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
 res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-// OPTIONS
 if (req.method === "OPTIONS") {
 return res.status(200).end();
 }
 
-// POST만 허용
 if (req.method !== "POST") {
 return res.status(405).json({
 answer: "POST 요청만 가능합니다."
@@ -20,14 +17,12 @@ try {
 const { message } = req.body || {};
 
 ```
-// 질문 확인
 if (!message || !message.trim()) {
   return res.status(400).json({
     answer: "질문을 입력해주세요."
   });
 }
 
-// API KEY 확인
 const apiKey = process.env.GEMINI_API_KEY;
 
 if (!apiKey) {
@@ -38,16 +33,15 @@ if (!apiKey) {
   });
 }
 
-// Gemini API 호출
 const url =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=" +
-  apiKey;
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent";
 
 const response = await fetch(url, {
   method: "POST",
 
   headers: {
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "x-goog-api-key": apiKey
   },
 
   body: JSON.stringify({
@@ -61,29 +55,40 @@ const response = await fetch(url, {
         ]
       }
     ],
-
     generationConfig: {
       maxOutputTokens: 1000
     }
   })
 });
 
-const data = await response.json();
+const responseText = await response.text();
 
 console.log("Gemini HTTP 상태:", response.status);
-console.log("Gemini 응답:", JSON.stringify(data));
+console.log("Gemini 원본 응답:", responseText);
 
-// Gemini API 오류
+let data;
+
+try {
+  data = JSON.parse(responseText);
+} catch (parseError) {
+  console.error("Gemini 응답 JSON 파싱 실패:", responseText);
+
+  return res.status(500).json({
+    answer: "Gemini가 정상적인 JSON 응답을 보내지 않았습니다.",
+    error: responseText
+  });
+}
+
 if (!response.ok) {
   console.error("Gemini API 오류:", data);
 
   return res.status(500).json({
-    answer: "Gemini API에서 오류가 발생했습니다.",
-    error: data?.error?.message || "알 수 없는 Gemini 오류"
+    answer: "Gemini API 오류가 발생했습니다.",
+    error: data?.error?.message || "알 수 없는 오류",
+    status: response.status
   });
 }
 
-// 답변 추출
 const answer =
   data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
@@ -92,11 +97,10 @@ if (!answer) {
 
   return res.status(500).json({
     answer: "Gemini에서 답변을 받지 못했습니다.",
-    error: "응답 구조를 확인해주세요."
+    error: JSON.stringify(data)
   });
 }
 
-// 정상 응답
 return res.status(200).json({
   answer: answer.trim()
 });
