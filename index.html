@@ -1,229 +1,515 @@
-import fs from "fs";
-import path from "path";
-import { GoogleGenAI } from "@google/genai";
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-});
+  <title>전남운전면허시험장 업무 안내 챗봇</title>
 
-// 챗봇22.txt 읽기
-function loadKnowledge() {
-  const filePath = path.join(process.cwd(), "data", "챗봇22.txt");
+  <style>
+    * {
+      box-sizing: border-box;
+    }
 
-  if (!fs.existsSync(filePath)) {
-    throw new Error("data/챗봇22.txt 파일을 찾을 수 없습니다.");
-  }
+    body {
+      margin: 0;
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        "Noto Sans KR",
+        Arial,
+        sans-serif;
+      background: #f5f7fb;
+      color: #222;
+    }
 
-  return fs.readFileSync(filePath, "utf8");
-}
+    .app {
+      width: 100%;
+      max-width: 900px;
+      height: 100vh;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+    }
 
-// 검색용 단어 정리
-function normalize(text) {
-  return text
-    .toLowerCase()
-    .replace(/[?!.,。！？]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+    .header {
+      padding: 18px 20px;
+      background: #1261c9;
+      color: white;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    }
 
-// 불필요한 조사 제거
-function tokenize(text) {
-  const stopWords = [
-    "은",
-    "는",
-    "이",
-    "가",
-    "을",
-    "를",
-    "에",
-    "에서",
-    "으로",
-    "로",
-    "와",
-    "과",
-    "도",
-    "의",
-    "하고",
-    "좀",
-    "요",
-    "해주세요",
-    "알려줘",
-    "알려주세요",
-    "어떻게",
-    "뭐",
-    "무엇",
-  ];
+    .header-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
 
-  return normalize(text)
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => {
-      let result = word;
+    .header-subtitle {
+      font-size: 13px;
+      opacity: 0.9;
+    }
 
-      for (const stopWord of stopWords) {
-        if (result.endsWith(stopWord) && result.length > stopWord.length) {
-          result = result.slice(0, -stopWord.length);
-        }
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      background: #f7f8fa;
+    }
+
+    .message-row {
+      display: flex;
+      margin-bottom: 16px;
+    }
+
+    .message-row.user {
+      justify-content: flex-end;
+    }
+
+    .message-row.bot {
+      justify-content: flex-start;
+    }
+
+    .message {
+      max-width: 78%;
+      padding: 12px 15px;
+      border-radius: 15px;
+      line-height: 1.6;
+      font-size: 14px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .message.user {
+      background: #1261c9;
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+
+    .message.bot {
+      background: white;
+      color: #222;
+      border: 1px solid #e5e7eb;
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.error {
+      background: #fff1f1;
+      color: #c62828;
+      border: 1px solid #ffcdd2;
+    }
+
+    .input-area {
+      display: flex;
+      gap: 10px;
+      padding: 14px;
+      background: white;
+      border-top: 1px solid #e5e7eb;
+    }
+
+    #messageInput {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid #d1d5db;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    #messageInput:focus {
+      border-color: #1261c9;
+      box-shadow: 0 0 0 2px rgba(18, 97, 201, 0.1);
+    }
+
+    #sendButton {
+      border: none;
+      border-radius: 12px;
+      padding: 0 20px;
+      background: #1261c9;
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      min-width: 70px;
+    }
+
+    #sendButton:hover {
+      background: #0d4fa8;
+    }
+
+    #sendButton:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+    }
+
+    .loading {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .loading span {
+      width: 6px;
+      height: 6px;
+      background: #888;
+      border-radius: 50%;
+      animation: bounce 1.2s infinite;
+    }
+
+    .loading span:nth-child(2) {
+      animation-delay: 0.15s;
+    }
+
+    .loading span:nth-child(3) {
+      animation-delay: 0.3s;
+    }
+
+    @keyframes bounce {
+      0%, 60%, 100% {
+        transform: translateY(0);
       }
 
-      return result;
-    })
-    .filter((word) => word.length >= 1);
-}
-
-// 자료를 문단 단위로 나누기
-function splitKnowledge(text) {
-  return text
-    .split(/\n\s*\n/)
-    .map((section) => section.trim())
-    .filter((section) => section.length > 0);
-}
-
-// 질문과 자료의 관련도 계산
-function scoreSection(question, section) {
-  const questionWords = tokenize(question);
-  const normalizedSection = normalize(section);
-
-  let score = 0;
-
-  for (const word of questionWords) {
-    if (word.length < 1) continue;
-
-    if (normalizedSection.includes(word)) {
-      score += word.length >= 2 ? 3 : 1;
+      30% {
+        transform: translateY(-5px);
+      }
     }
-  }
 
-  return score;
-}
+    @media (max-width: 600px) {
+      .header-title {
+        font-size: 17px;
+      }
 
-// 질문과 관련된 자료만 추출
-function findRelevantKnowledge(question, knowledge) {
-  const sections = splitKnowledge(knowledge);
+      .message {
+        max-width: 88%;
+      }
 
-  const scored = sections
-    .map((section) => ({
-      section,
-      score: scoreSection(question, section),
-    }))
-    .sort((a, b) => b.score - a.score);
+      .chat-container {
+        padding: 14px;
+      }
 
-  // 아무것도 검색되지 않은 경우
-  if (!scored.length || scored[0].score === 0) {
-    return "";
-  }
+      .input-area {
+        padding: 10px;
+      }
 
-  // 관련도가 높은 자료만 전달
-  const selected = scored
-    .filter((item) => item.score > 0)
-    .slice(0, 8)
-    .map((item) => item.section);
+      #sendButton {
+        padding: 0 14px;
+      }
+    }
+  </style>
+</head>
 
-  return selected.join("\n\n--------------------\n\n");
-}
+<body>
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({
-      error: "POST 요청만 허용됩니다.",
-    });
-  }
+  <div class="app">
 
-  try {
-    const { message } = req.body || {};
+    <header class="header">
+      <div class="header-title">
+        한국도로교통공단 전남운전면허시험장
+      </div>
 
-    if (!message || typeof message !== "string") {
-      return res.status(400).json({
-        error: "메시지를 입력해주세요.",
+      <div class="header-subtitle">
+        업무 안내 챗봇
+      </div>
+    </header>
+
+
+    <main
+      id="chatContainer"
+      class="chat-container"
+      aria-live="polite"
+    >
+
+      <div class="message-row bot">
+        <div class="message bot">
+안녕하세요! 한국도로교통공단 전남운전면허시험장 업무 안내 챗봇입니다.
+
+운전면허와 관련하여 궁금하신 업무를 말씀해 주시면 안내해 드리겠습니다.
+        </div>
+      </div>
+
+    </main>
+
+
+    <form id="chatForm" class="input-area">
+
+      <input
+        id="messageInput"
+        type="text"
+        placeholder="궁금한 업무를 입력하세요."
+        autocomplete="off"
+        maxlength="1000"
+      />
+
+      <button
+        id="sendButton"
+        type="submit"
+      >
+        보내기
+      </button>
+
+    </form>
+
+  </div>
+
+
+  <script>
+
+    const chatContainer = document.getElementById("chatContainer");
+    const chatForm = document.getElementById("chatForm");
+    const messageInput = document.getElementById("messageInput");
+    const sendButton = document.getElementById("sendButton");
+
+
+    // -----------------------------
+    // 메시지를 화면에 추가
+    // -----------------------------
+    function addMessage(text, type = "bot") {
+
+      const row = document.createElement("div");
+
+      row.className = `message-row ${type}`;
+
+
+      const message = document.createElement("div");
+
+      message.className = `message ${type}`;
+
+      // innerHTML을 사용하지 않고 textContent를 사용합니다.
+      // 사용자가 입력한 HTML/스크립트가 실행되지 않도록 하기 위한 처리입니다.
+      message.textContent = text;
+
+
+      row.appendChild(message);
+
+      chatContainer.appendChild(row);
+
+
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+
+
+      return message;
+    }
+
+
+    // -----------------------------
+    // 로딩 메시지
+    // -----------------------------
+    function addLoadingMessage() {
+
+      const row = document.createElement("div");
+
+      row.className = "message-row bot";
+
+
+      const message = document.createElement("div");
+
+      message.className = "message bot";
+
+
+      const loading = document.createElement("div");
+
+      loading.className = "loading";
+
+      loading.innerHTML = `
+        <span></span>
+        <span></span>
+        <span></span>
+      `;
+
+
+      message.appendChild(loading);
+
+      row.appendChild(message);
+
+      chatContainer.appendChild(row);
+
+
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+
+
+      return row;
+    }
+
+
+    // -----------------------------
+    // 질문 보내기
+    // -----------------------------
+    async function sendMessage(question) {
+
+      const response = await fetch("/api/chat", {
+
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json"
+        },
+
+        body: JSON.stringify({
+          message: question
+        })
+
       });
+
+
+      /*
+       * 중요
+       *
+       * 서버가 정상적인 JSON을 보내면 JSON으로 처리하고,
+       * 서버 오류 때문에 일반 텍스트가 돌아오더라도
+       * JSON.parse 오류가 발생하지 않도록 text()로 먼저 받습니다.
+       */
+      const rawText = await response.text();
+
+
+      let data = null;
+
+
+      try {
+
+        data = JSON.parse(rawText);
+
+      } catch (jsonError) {
+
+        console.error("서버 응답이 JSON이 아닙니다:", rawText);
+
+        throw new Error(
+          rawText ||
+          `서버에서 ${response.status} 오류가 발생했습니다.`
+        );
+
+      }
+
+
+      // HTTP 상태 코드가 200번대가 아니면 오류 처리
+      if (!response.ok) {
+
+        throw new Error(
+          data.error ||
+          data.message ||
+          `서버 오류가 발생했습니다. (${response.status})`
+        );
+
+      }
+
+
+      // 정상적인 응답
+      if (data.answer) {
+
+        return data.answer;
+
+      }
+
+
+      if (data.message) {
+
+        return data.message;
+
+      }
+
+
+      throw new Error("서버에서 답변을 받지 못했습니다.");
+
     }
 
-    const knowledge = loadKnowledge();
 
-    // 인사말은 별도로 처리
-    const greetingPattern =
-      /^(안녕|안녕하세요|하이|hello|hi|반가워|반갑습니다)[!?.\s]*$/i;
+    // -----------------------------
+    // 폼 제출
+    // -----------------------------
+    chatForm.addEventListener("submit", async function(event) {
 
-    if (greetingPattern.test(message.trim())) {
-      return res.status(200).json({
-        answer:
-          "안녕하세요! 한국도로교통공단 전남운전면허시험장 업무 안내 챗봇입니다. 운전면허와 관련하여 궁금하신 업무를 말씀해 주시면 안내해 드리겠습니다.",
-      });
-    }
+      event.preventDefault();
 
-    // 질문과 관련된 업무자료 검색
-    const relevantKnowledge = findRelevantKnowledge(
-      message,
-      knowledge
-    );
 
-    // 관련 자료를 찾지 못한 경우
-    if (!relevantKnowledge) {
-      return res.status(200).json({
-        answer:
-          "죄송합니다. 제공된 업무자료에서 해당 질문과 관련된 내용을 찾지 못했습니다. 전남운전면허시험장 업무와 관련된 질문을 해주세요.",
-      });
-    }
+      const question = messageInput.value.trim();
 
-    const systemInstruction = `
-당신은 한국도로교통공단 전남운전면허시험장의 업무 안내 챗봇입니다.
 
-가장 중요한 원칙은 다음과 같습니다.
+      if (!question) {
 
-1. 반드시 아래에 제공된 [업무자료]만 근거로 답변하세요.
+        return;
 
-2. 업무자료에 없는 사실을 절대로 추가하지 마세요.
-   일반적인 상식이나 인터넷에서 알고 있는 내용을 사용하지 마세요.
+      }
 
-3. 업무자료에 없는 질문이라면
-   "제공된 업무자료에서 해당 내용을 확인할 수 없습니다."
-   라고 답변하세요.
 
-4. 업무자료의 숫자, 시간, 수수료, 면제 여부, 준비물, 절차 등을 임의로 변경하지 마세요.
+      // 사용자 메시지 표시
+      addMessage(question, "user");
 
-5. 업무자료에 서로 다른 내용이 함께 존재하는 경우,
-   임의로 판단하거나 하나로 합치지 마세요.
-   질문과 가장 직접적으로 관련된 항목을 기준으로 답변하고,
-   필요하다면 "업무자료에 관련 내용이 다르게 기재되어 있어 정확한 확인이 필요합니다."라고 안내하세요.
 
-6. 사용자가 질문한 내용에 필요한 정보만 간결하게 답변하세요.
+      // 입력창 초기화
+      messageInput.value = "";
 
-7. 답변은 한국어로 하세요.
 
-8. "[핵심]", "[주의사항]" 같은 내부 태그를 사용하지 마세요.
+      // 버튼 잠금
+      sendButton.disabled = true;
 
-9. 제공된 자료에 URL이 있다면 해당 URL을 그대로 안내할 수 있습니다.
-   단, 새로운 URL을 임의로 만들어내지 마세요.
+      sendButton.textContent = "답변 중";
 
-10. 사용자의 질문에 직접 답하고, 필요할 경우 준비물 / 수수료 / 절차 등을 bullet 형식으로 정리하세요.
 
-[업무자료]
-${relevantKnowledge}
-`;
+      // 로딩 표시
+      const loadingMessage = addLoadingMessage();
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash-lite",
-      contents: message,
-      config: {
-        systemInstruction,
-        temperature: 0.1,
-      },
+
+      try {
+
+        const answer = await sendMessage(question);
+
+
+        // 로딩 제거
+        loadingMessage.remove();
+
+
+        // 답변 표시
+        addMessage(answer, "bot");
+
+      }
+
+
+      catch (error) {
+
+        console.error(error);
+
+
+        // 로딩 제거
+        loadingMessage.remove();
+
+
+        let errorMessage =
+          "오류가 발생했습니다.\n잠시 후 다시 질문해 주세요.";
+
+
+        if (error && error.message) {
+
+          errorMessage =
+            "오류가 발생했습니다.\n\n" +
+            error.message;
+
+        }
+
+
+        addMessage(errorMessage, "error");
+
+      }
+
+
+      finally {
+
+        sendButton.disabled = false;
+
+        sendButton.textContent = "보내기";
+
+        messageInput.focus();
+
+      }
+
     });
 
-    const answer = response.text;
 
-    return res.status(200).json({
-      answer:
-        answer ||
-        "죄송합니다. 제공된 업무자료를 바탕으로 답변을 생성하지 못했습니다.",
-    });
-  } catch (error) {
-    console.error("Gemini API Error:", error);
+    // 페이지가 열리면 입력창에 포커스
+    messageInput.focus();
 
-    return res.status(500).json({
-      error:
-        error?.message ||
-        "Gemini API 호출 중 오류가 발생했습니다.",
-    });
-  }
-}
+  </script>
+
+</body>
+</html>
