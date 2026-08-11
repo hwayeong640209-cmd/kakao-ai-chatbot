@@ -1,10 +1,17 @@
+```html
 <!DOCTYPE html>
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>전남운전면허시험장 업무 안내 챗봇</title>
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+
+  <title>
+    전남운전면허시험장 업무 안내 챗봇
+  </title>
 
   <style>
     * {
@@ -18,184 +25,240 @@
         BlinkMacSystemFont,
         "Segoe UI",
         "Noto Sans KR",
-        Arial,
         sans-serif;
-      background: #f5f7fb;
+
+      background: #f4f6f8;
       color: #222;
     }
 
-    .app {
+    .container {
       width: 100%;
       max-width: 900px;
-      height: 100vh;
       margin: 0 auto;
+      min-height: 100vh;
+
       display: flex;
       flex-direction: column;
-      background: #fff;
+
+      background: #ffffff;
     }
+
+    /* -------------------------------
+       헤더
+    -------------------------------- */
 
     .header {
-      padding: 18px 20px;
-      background: #1261c9;
+      padding: 20px;
+      background: #14532d;
       color: white;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+
+      position: sticky;
+      top: 0;
+      z-index: 10;
     }
 
-    .header-title {
+    .header h1 {
+      margin: 0;
       font-size: 20px;
-      font-weight: 700;
-      margin-bottom: 5px;
+      line-height: 1.4;
     }
 
-    .header-subtitle {
+    .header p {
+      margin: 6px 0 0;
       font-size: 13px;
       opacity: 0.9;
     }
 
+    /* -------------------------------
+       채팅 영역
+    -------------------------------- */
+
     .chat-container {
       flex: 1;
-      overflow-y: auto;
+
       padding: 20px;
-      background: #f7f8fa;
-    }
 
-    .message-row {
+      overflow-y: auto;
+
       display: flex;
-      margin-bottom: 16px;
-    }
-
-    .message-row.user {
-      justify-content: flex-end;
-    }
-
-    .message-row.bot {
-      justify-content: flex-start;
+      flex-direction: column;
+      gap: 14px;
     }
 
     .message {
-      max-width: 78%;
-      padding: 12px 15px;
-      border-radius: 15px;
-      line-height: 1.6;
-      font-size: 14px;
-      white-space: pre-wrap;
-      word-break: break-word;
+      display: flex;
+      width: 100%;
     }
 
     .message.user {
-      background: #1261c9;
-      color: white;
-      border-bottom-right-radius: 4px;
+      justify-content: flex-end;
     }
 
     .message.bot {
-      background: white;
+      justify-content: flex-start;
+    }
+
+    .bubble {
+      max-width: 80%;
+
+      padding: 12px 15px;
+
+      border-radius: 16px;
+
+      font-size: 15px;
+      line-height: 1.6;
+
+      white-space: pre-wrap;
+
+      word-break: break-word;
+    }
+
+    .user .bubble {
+      background: #14532d;
+      color: white;
+
+      border-bottom-right-radius: 4px;
+    }
+
+    .bot .bubble {
+      background: #f1f3f5;
       color: #222;
-      border: 1px solid #e5e7eb;
+
       border-bottom-left-radius: 4px;
     }
 
-    .message.error {
-      background: #fff1f1;
-      color: #c62828;
-      border: 1px solid #ffcdd2;
+    /* -------------------------------
+       로딩
+    -------------------------------- */
+
+    .loading {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+
+      color: #666;
+      font-size: 14px;
     }
 
+    .loading span {
+      width: 7px;
+      height: 7px;
+
+      border-radius: 50%;
+      background: #777;
+
+      animation: blink 1.2s infinite;
+    }
+
+    .loading span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .loading span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes blink {
+      0%,
+      80%,
+      100% {
+        opacity: 0.3;
+      }
+
+      40% {
+        opacity: 1;
+      }
+    }
+
+    /* -------------------------------
+       입력 영역
+    -------------------------------- */
+
     .input-area {
+      border-top: 1px solid #ddd;
+
+      padding: 12px;
+
       display: flex;
-      gap: 10px;
-      padding: 14px;
+      gap: 8px;
+
       background: white;
-      border-top: 1px solid #e5e7eb;
+
+      position: sticky;
+      bottom: 0;
     }
 
     #messageInput {
       flex: 1;
+
       min-width: 0;
-      border: 1px solid #d1d5db;
-      border-radius: 12px;
+
       padding: 12px 14px;
-      font-size: 14px;
+
+      border: 1px solid #ccc;
+      border-radius: 12px;
+
+      font-size: 15px;
+
       outline: none;
     }
 
     #messageInput:focus {
-      border-color: #1261c9;
-      box-shadow: 0 0 0 2px rgba(18, 97, 201, 0.1);
+      border-color: #14532d;
     }
 
     #sendButton {
       border: none;
-      border-radius: 12px;
+
       padding: 0 20px;
-      background: #1261c9;
+
+      border-radius: 12px;
+
+      background: #14532d;
       color: white;
-      font-size: 14px;
-      font-weight: 600;
+
+      font-size: 15px;
+
       cursor: pointer;
-      min-width: 70px;
     }
 
     #sendButton:hover {
-      background: #0d4fa8;
+      background: #166534;
     }
 
     #sendButton:disabled {
-      background: #9ca3af;
+      background: #aaa;
       cursor: not-allowed;
     }
 
-    .loading {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-    }
-
-    .loading span {
-      width: 6px;
-      height: 6px;
-      background: #888;
-      border-radius: 50%;
-      animation: bounce 1.2s infinite;
-    }
-
-    .loading span:nth-child(2) {
-      animation-delay: 0.15s;
-    }
-
-    .loading span:nth-child(3) {
-      animation-delay: 0.3s;
-    }
-
-    @keyframes bounce {
-      0%, 60%, 100% {
-        transform: translateY(0);
-      }
-
-      30% {
-        transform: translateY(-5px);
-      }
-    }
+    /* -------------------------------
+       모바일
+    -------------------------------- */
 
     @media (max-width: 600px) {
-      .header-title {
-        font-size: 17px;
+      .header {
+        padding: 16px;
       }
 
-      .message {
-        max-width: 88%;
+      .header h1 {
+        font-size: 18px;
       }
 
       .chat-container {
         padding: 14px;
       }
 
+      .bubble {
+        max-width: 88%;
+        font-size: 14px;
+      }
+
       .input-area {
-        padding: 10px;
+        padding: 8px;
       }
 
       #sendButton {
-        padding: 0 14px;
+        padding: 0 15px;
       }
     }
   </style>
@@ -203,44 +266,56 @@
 
 <body>
 
-  <div class="app">
+  <div class="container">
+
+    <!-- ==========================
+         헤더
+    =========================== -->
 
     <header class="header">
-      <div class="header-title">
+      <h1>
         한국도로교통공단 전남운전면허시험장
-      </div>
+      </h1>
 
-      <div class="header-subtitle">
+      <p>
         업무 안내 챗봇
-      </div>
+      </p>
     </header>
 
+
+    <!-- ==========================
+         채팅창
+    =========================== -->
 
     <main
       id="chatContainer"
       class="chat-container"
-      aria-live="polite"
     >
 
-      <div class="message-row bot">
-        <div class="message bot">
-안녕하세요! 한국도로교통공단 전남운전면허시험장 업무 안내 챗봇입니다.
-
-운전면허와 관련하여 궁금하신 업무를 말씀해 주시면 안내해 드리겠습니다.
+      <div class="message bot">
+        <div class="bubble">
+          안녕하세요! 한국도로교통공단 전남운전면허시험장 업무 안내 챗봇입니다.
+          운전면허와 관련하여 궁금하신 업무를 말씀해 주세요.
         </div>
       </div>
 
     </main>
 
 
-    <form id="chatForm" class="input-area">
+    <!-- ==========================
+         입력창
+    =========================== -->
+
+    <form
+      id="chatForm"
+      class="input-area"
+    >
 
       <input
         id="messageInput"
         type="text"
-        placeholder="궁금한 업무를 입력하세요."
+        placeholder="궁금한 업무를 입력해주세요."
         autocomplete="off"
-        maxlength="1000"
       />
 
       <button
@@ -256,260 +331,350 @@
 
 
   <script>
+    // ==================================================
+    // DOM
+    // ==================================================
 
-    const chatContainer = document.getElementById("chatContainer");
-    const chatForm = document.getElementById("chatForm");
-    const messageInput = document.getElementById("messageInput");
-    const sendButton = document.getElementById("sendButton");
+    const chatContainer =
+      document.getElementById("chatContainer");
 
+    const chatForm =
+      document.getElementById("chatForm");
 
-    // -----------------------------
-    // 메시지를 화면에 추가
-    // -----------------------------
-    function addMessage(text, type = "bot") {
+    const messageInput =
+      document.getElementById("messageInput");
 
-      const row = document.createElement("div");
-
-      row.className = `message-row ${type}`;
-
-
-      const message = document.createElement("div");
-
-      message.className = `message ${type}`;
-
-      // innerHTML을 사용하지 않고 textContent를 사용합니다.
-      // 사용자가 입력한 HTML/스크립트가 실행되지 않도록 하기 위한 처리입니다.
-      message.textContent = text;
+    const sendButton =
+      document.getElementById("sendButton");
 
 
-      row.appendChild(message);
+    // ==================================================
+    // 메시지 추가
+    // ==================================================
 
-      chatContainer.appendChild(row);
+    function addMessage(type, text) {
+      const message =
+        document.createElement("div");
 
+      message.className =
+        `message ${type}`;
 
-      chatContainer.scrollTop = chatContainer.scrollHeight;
+      const bubble =
+        document.createElement("div");
 
+      bubble.className = "bubble";
 
-      return message;
+      // innerHTML이 아니라 textContent를 사용하여
+      // 서버 응답이 HTML로 실행되지 않도록 한다.
+      bubble.textContent = text;
+
+      message.appendChild(bubble);
+
+      chatContainer.appendChild(message);
+
+      scrollToBottom();
     }
 
 
-    // -----------------------------
-    // 로딩 메시지
-    // -----------------------------
-    function addLoadingMessage() {
+    // ==================================================
+    // 로딩 표시
+    // ==================================================
 
-      const row = document.createElement("div");
+    function showLoading() {
+      const message =
+        document.createElement("div");
 
-      row.className = "message-row bot";
+      message.className =
+        "message bot";
 
+      message.id =
+        "loadingMessage";
 
-      const message = document.createElement("div");
-
-      message.className = "message bot";
-
-
-      const loading = document.createElement("div");
-
-      loading.className = "loading";
-
-      loading.innerHTML = `
-        <span></span>
-        <span></span>
-        <span></span>
+      message.innerHTML = `
+        <div class="bubble">
+          <div class="loading">
+            <span></span>
+            <span></span>
+            <span></span>
+            답변을 작성하고 있습니다.
+          </div>
+        </div>
       `;
 
+      chatContainer.appendChild(message);
 
-      message.appendChild(loading);
-
-      row.appendChild(message);
-
-      chatContainer.appendChild(row);
-
-
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-
-
-      return row;
+      scrollToBottom();
     }
 
 
-    // -----------------------------
-    // 질문 보내기
-    // -----------------------------
-    async function sendMessage(question) {
+    function hideLoading() {
+      const loading =
+        document.getElementById(
+          "loadingMessage"
+        );
 
-      const response = await fetch("/api/chat", {
-
-        method: "POST",
-
-        headers: {
-          "Content-Type": "application/json"
-        },
-
-        body: JSON.stringify({
-          message: question
-        })
-
-      });
+      if (loading) {
+        loading.remove();
+      }
+    }
 
 
-      /*
-       * 중요
-       *
-       * 서버가 정상적인 JSON을 보내면 JSON으로 처리하고,
-       * 서버 오류 때문에 일반 텍스트가 돌아오더라도
-       * JSON.parse 오류가 발생하지 않도록 text()로 먼저 받습니다.
-       */
-      const rawText = await response.text();
+    // ==================================================
+    // 스크롤
+    // ==================================================
 
+    function scrollToBottom() {
+      chatContainer.scrollTop =
+        chatContainer.scrollHeight;
+    }
+
+
+    // ==================================================
+    // 서버 응답을 안전하게 읽기
+    // ==================================================
+
+    async function readResponse(response) {
+
+      // 먼저 텍스트로 받는다.
+      // response.json()을 바로 사용하지 않는다.
+      const rawText =
+        await response.text();
 
       let data = null;
 
-
+      // JSON인지 확인
       try {
-
         data = JSON.parse(rawText);
-
-      } catch (jsonError) {
-
-        console.error("서버 응답이 JSON이 아닙니다:", rawText);
-
-        throw new Error(
-          rawText ||
-          `서버에서 ${response.status} 오류가 발생했습니다.`
-        );
-
+      } catch (error) {
+        // JSON이 아니면 그대로 문자열로 처리
+        data = null;
       }
 
 
-      // HTTP 상태 코드가 200번대가 아니면 오류 처리
-      if (!response.ok) {
+      // -------------------------------
+      // 정상 JSON
+      // -------------------------------
 
-        throw new Error(
-          data.error ||
-          data.message ||
-          `서버 오류가 발생했습니다. (${response.status})`
-        );
+      if (response.ok && data) {
 
+        if (
+          typeof data.answer === "string"
+        ) {
+          return data.answer;
+        }
+
+        if (
+          typeof data.message === "string"
+        ) {
+          return data.message;
+        }
+
+        return "서버에서 답변을 받았지만 내용을 확인할 수 없습니다.";
       }
 
 
-      // 정상적인 응답
-      if (data.answer) {
+      // -------------------------------
+      // JSON 형태의 서버 오류
+      // -------------------------------
 
-        return data.answer;
-
+      if (
+        data &&
+        typeof data.error === "string"
+      ) {
+        throw new Error(data.error);
       }
 
 
-      if (data.message) {
+      // -------------------------------
+      // JSON이 아닌 서버 오류
+      // -------------------------------
 
-        return data.message;
+      if (rawText) {
 
+        // Vercel/서버에서 HTML 또는 일반 텍스트
+        // 오류가 내려오는 경우도 처리
+        const cleaned =
+          rawText
+            .replace(/<[^>]*>/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        if (cleaned) {
+          throw new Error(cleaned);
+        }
       }
 
 
-      throw new Error("서버에서 답변을 받지 못했습니다.");
-
+      throw new Error(
+        `서버 오류가 발생했습니다. (${response.status})`
+      );
     }
 
 
-    // -----------------------------
-    // 폼 제출
-    // -----------------------------
-    chatForm.addEventListener("submit", async function(event) {
+    // ==================================================
+    // 질문 보내기
+    // ==================================================
 
-      event.preventDefault();
+    async function sendMessage() {
 
+      const message =
+        messageInput.value.trim();
 
-      const question = messageInput.value.trim();
-
-
-      if (!question) {
-
+      if (!message) {
         return;
-
       }
 
 
-      // 사용자 메시지 표시
-      addMessage(question, "user");
+      // 사용자 질문 표시
+      addMessage(
+        "user",
+        message
+      );
 
 
-      // 입력창 초기화
+      // 입력창 비우기
       messageInput.value = "";
 
 
-      // 버튼 잠금
+      // 중복 전송 방지
       sendButton.disabled = true;
-
-      sendButton.textContent = "답변 중";
+      messageInput.disabled = true;
 
 
       // 로딩 표시
-      const loadingMessage = addLoadingMessage();
+      showLoading();
 
 
       try {
 
-        const answer = await sendMessage(question);
+        // --------------------------------------------
+        // API 호출
+        // --------------------------------------------
+
+        const response =
+          await fetch("/api/chat", {
+
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json"
+            },
+
+            body: JSON.stringify({
+              message: message
+            })
+
+          });
 
 
-        // 로딩 제거
-        loadingMessage.remove();
+        // --------------------------------------------
+        // 안전하게 응답 읽기
+        // --------------------------------------------
+
+        const answer =
+          await readResponse(response);
 
 
+        // --------------------------------------------
         // 답변 표시
-        addMessage(answer, "bot");
+        // --------------------------------------------
 
-      }
-
-
-      catch (error) {
-
-        console.error(error);
+        addMessage(
+          "bot",
+          answer
+        );
 
 
-        // 로딩 제거
-        loadingMessage.remove();
+      } catch (error) {
+
+        console.error(
+          "챗봇 요청 오류:",
+          error
+        );
 
 
+        // 사용자에게 너무 긴 서버 오류를
+        // 그대로 노출하지 않도록 처리
         let errorMessage =
-          "오류가 발생했습니다.\n잠시 후 다시 질문해 주세요.";
+          error?.message ||
+          "알 수 없는 오류가 발생했습니다.";
 
 
-        if (error && error.message) {
-
+        // JSON 파싱 오류 같은 내부 오류는
+        // 사용자에게 보여주지 않는다.
+        if (
+          errorMessage.includes(
+            "Unexpected token"
+          )
+        ) {
           errorMessage =
-            "오류가 발생했습니다.\n\n" +
-            error.message;
-
+            "서버에서 정상적인 답변을 받지 못했습니다.";
         }
 
 
-        addMessage(errorMessage, "error");
+        addMessage(
+          "bot",
+          "오류가 발생했습니다.\n" +
+          errorMessage
+        );
 
-      }
+      } finally {
 
-
-      finally {
+        hideLoading();
 
         sendButton.disabled = false;
-
-        sendButton.textContent = "보내기";
+        messageInput.disabled = false;
 
         messageInput.focus();
-
       }
+    }
 
-    });
+
+    // ==================================================
+    // 폼 제출
+    // ==================================================
+
+    chatForm.addEventListener(
+      "submit",
+      function(event) {
+
+        event.preventDefault();
+
+        sendMessage();
+      }
+    );
 
 
-    // 페이지가 열리면 입력창에 포커스
+    // ==================================================
+    // Enter 키
+    // ==================================================
+
+    messageInput.addEventListener(
+      "keydown",
+      function(event) {
+
+        if (
+          event.key === "Enter" &&
+          !event.shiftKey
+        ) {
+
+          event.preventDefault();
+
+          chatForm.requestSubmit();
+        }
+      }
+    );
+
+
+    // ==================================================
+    // 처음 실행할 때 입력창 포커스
+    // ==================================================
+
     messageInput.focus();
 
   </script>
 
 </body>
 </html>
+```
